@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>BINGO BLITZ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131c;
+      --surface2: #1c1c2e;
+      --border: #2a2a40;
+      --accent: #e8ff47;
+      --accent2: #ff4f7b;
+      --accent3: #47d4ff;
+      --text: #f0f0f8;
+      --muted: #6b6b88;
+      --checked: #e8ff47;
+      --free: #47d4ff;
+      --bingo: #ff4f7b;
+      --radius: 12px;
+      --font-display: 'Bebas Neue', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ── NOISE TEXTURE ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.4;
+    }
+
+    /* ── SCREENS ── */
+    .screen {
+      display: none;
+      flex-direction: column;
+      min-height: 100svh;
+      padding: 0;
+    }
+    .screen.active { display: flex; }
+
+    /* ── LANDING ── */
+    #screen-landing {
+      align-items: center;
+      justify-content: center;
+      padding: 40px 24px;
+      gap: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #screen-landing::after {
+      content: '';
+      position: absolute;
+      width: 400px; height: 400px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(232,255,71,0.08) 0%, transparent 70%);
+      top: -100px; right: -100px;
+      pointer-events: none;
+    }
+
+    .logo-block {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .logo-top {
+      font-family: var(--font-display);
+      font-size: clamp(72px, 22vw, 110px);
+      letter-spacing: 0.04em;
+      line-height: 0.85;
+      color: var(--accent);
+      text-shadow: 4px 4px 0 rgba(232,255,71,0.15);
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+
+    .logo-sub {
+      font-family: var(--font-display);
+      font-size: clamp(22px, 7vw, 36px);
+      letter-spacing: 0.3em;
+      color: var(--muted);
+      margin-top: -4px;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { text-shadow: 4px 4px 0 rgba(232,255,71,0.15); }
+      50% { text-shadow: 0 0 40px rgba(232,255,71,0.3), 4px 4px 0 rgba(232,255,71,0.15); }
+    }
+
+    .landing-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 320px;
+    }
+
+    /* ── BUTTONS ── */
+    .btn {
+      font-family: var(--font-display);
+      font-size: 22px;
+      letter-spacing: 0.08em;
+      padding: 16px 24px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      transition: transform 0.1s, box-shadow 0.2s;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: manipulation;
+    }
+    .btn:active { transform: scale(0.97); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #0a0a0f;
+    }
+    .btn-primary:active { box-shadow: 0 0 20px rgba(232,255,71,0.4); }
+
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1.5px solid var(--border);
+    }
+
+    .btn-danger {
+      background: var(--accent2);
+      color: #fff;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--font-body);
+      font-size: 14px;
+      padding: 8px;
+    }
+
+    .btn-sm {
+      font-size: 15px;
+      padding: 10px 16px;
+    }
+
+    /* ── FORM ELEMENTS ── */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+    }
+
+    label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    input, textarea, select {
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 16px; /* prevents iOS zoom */
+      padding: 14px 16px;
+      width: 100%;
+      outline: none;
+      -webkit-appearance: none;
+      transition: border-color 0.2s;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--accent);
+    }
+    input::placeholder, textarea::placeholder { color: var(--muted); }
+
+    textarea {
+      resize: none;
+      min-height: 120px;
+    }
+
+    select {
+      cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b6b88' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 36px;
+    }
+
+    /* ── SCROLLABLE CARD AREAS ── */
+    .scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 16px 24px;
+    }
+
+    /* ── TOP BAR ── */
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .top-bar-title {
+      font-family: var(--font-display);
+      font-size: 28px;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+    }
+
+    .room-badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--accent3);
+    }
+
+    /* ── SECTION HEADERS ── */
+    .section-header {
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 24px 0 12px;
+    }
+
+    /* ── PROMPT TAGS ── */
+    .prompt-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .prompt-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 14px;
+    }
+
+    .prompt-num {
+      font-family: var(--font-display);
+      font-size: 18px;
+      color: var(--accent);
+      min-width: 28px;
+    }
+
+    .prompt-del {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px;
+      line-height: 1;
+    }
+
+    /* ── BINGO GRID ── */
+    .bingo-wrapper {
+      padding: 12px 0;
+    }
+
+    .bingo-header {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 4px;
+    }
+
+    .bingo-letter {
+      flex: 1;
+      text-align: center;
+      font-family: var(--font-display);
+      font-size: clamp(18px, 5vw, 28px);
+      letter-spacing: 0.06em;
+      color: var(--accent);
+    }
+
+    .bingo-grid {
+      display: grid;
+      gap: 4px;
+      width: 100%;
+    }
+
+    .bingo-cell {
+      aspect-ratio: 1;
+      border-radius: 8px;
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+      padding: 4px;
+      position: relative;
+      overflow: hidden;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .bingo-cell-text {
+      font-size: clamp(7px, 2vw, 12px);
+      text-align: center;
+      line-height: 1.2;
+      word-break: break-word;
+      color: var(--text);
+      z-index: 1;
+      position: relative;
+    }
+
+    .bingo-cell.checked {
+      background: var(--checked);
+      border-color: var(--checked);
+    }
+    .bingo-cell.checked .bingo-cell-text { color: #0a0a0f; font-weight: 700; }
+
+    .bingo-cell.free {
+      background: rgba(71, 212, 255, 0.15);
+      border-color: var(--accent3);
+    }
+    .bingo-cell.free .bingo-cell-text { color: var(--accent3); font-weight: 700; }
+
+    .bingo-cell:active:not(.free) {
+      transform: scale(0.94);
+    }
+
+    /* stamp effect */
+    .bingo-cell.checked::after {
+      content: '✓';
+      position: absolute;
+      font-size: clamp(18px, 5vw, 32px);
+      font-weight: 900;
+      color: rgba(0,0,0,0.15);
+      z-index: 0;
+    }
+
+    .bingo-cell.bingo-row {
+      background: var(--bingo);
+      border-color: var(--bingo);
+      animation: bingo-flash 0.5s ease;
+    }
+    .bingo-cell.bingo-row .bingo-cell-text { color: #fff; font-weight: 700; }
+
+    @keyframes bingo-flash {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+      100% { transform: scale(1); }
+    }
+
+    /* ── PARTICIPANT LIST ── */
+    .participant-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .participant-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .participant-card.has-bingo {
+      border-color: var(--bingo);
+      background: rgba(255,79,123,0.08);
+    }
+
+    .participant-name {
+      font-weight: 700;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .participant-progress {
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .participant-progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    .participant-stat {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .bingo-tag {
+      font-family: var(--font-display);
+      font-size: 14px;
+      color: var(--bingo);
+      letter-spacing: 0.1em;
+    }
+
+    /* ── ACTIVITY FEED ── */
+    .activity-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .activity-item {
+      background: var(--surface);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 10px 12px;
+      font-size: 13px;
+      animation: slide-in 0.3s ease;
+    }
+
+    .activity-item.bingo-event {
+      border-left-color: var(--bingo);
+      background: rgba(255,79,123,0.08);
+    }
+
+    @keyframes slide-in {
+      from { opacity: 0; transform: translateX(-8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+
+    .activity-time {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 12px 20px;
+      border-radius: 100px;
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      white-space: nowrap;
+      max-width: 90vw;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── BINGO OVERLAY ── */
+    #bingo-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 500;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #bingo-overlay.show { display: flex; }
+
+    .bingo-big-text {
+      font-family: var(--font-display);
+      font-size: clamp(80px, 25vw, 140px);
+      color: var(--bingo);
+      text-shadow: 0 0 60px rgba(255,79,123,0.5);
+      animation: bingo-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      letter-spacing: 0.05em;
+    }
+
+    @keyframes bingo-pop {
+      from { transform: scale(0.5); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .bingo-overlay-name {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    /* ── ARBITER SETUP FLOW ── */
+    #screen-arbiter-setup {
+      padding: 0;
+    }
+
+    .setup-scroll {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .setup-inner {
+      padding: 24px 16px 40px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .setup-step {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+    }
+
+    .step-title {
+      font-family: var(--font-display);
+      font-size: 20px;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+    }
+
+    .add-prompt-row {
+      display: flex;
+      gap: 8px;
+    }
+    .add-prompt-row input { flex: 1; }
+    .add-prompt-row .btn { white-space: nowrap; }
+
+    .prompt-counter {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: right;
+    }
+
+    .prompt-counter span {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    /* ── TABS ── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 9;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 14px 8px;
+      font-family: var(--font-display);
+      font-size: 16px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── JOINING SCREEN ── */
+    #screen-join {
+      align-items: center;
+      justify-content: center;
+      padding: 32px 24px;
+      gap: 24px;
+    }
+
+    .join-logo {
+      font-family: var(--font-display);
+      font-size: 48px;
+      color: var(--accent);
+      letter-spacing: 0.1em;
+    }
+
+    .join-form {
+      width: 100%;
+      max-width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ── STATUS DOT ── */
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: inline-block;
+      margin-right: 6px;
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── ARBITER DASHBOARD ── */
+    #screen-arbiter {
+      padding: 0;
+    }
+
+    /* ── CONFETTI ── */
+    .confetti-piece {
+      position: fixed;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      animation: confetti-fall 2.5s ease-in forwards;
+      pointer-events: none;
+      z-index: 501;
+    }
+    @keyframes confetti-fall {
+      0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+    }
+
+    /* ── MISC ── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 0;
+    }
+
+    .empty-state {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 24px;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .info-row strong {
+      color: var(--text);
+    }
+
+    .copy-btn {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--accent3);
+      font-size: 12px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-family: var(--font-body);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ──────────────────────── LANDING ──────────────────────── -->
+<div id="screen-landing" class="screen active">
+  <div class="logo-block">
+    <div class="logo-top">BINGO</div>
+    <div class="logo-sub">BLITZ</div>
+  </div>
+  <div class="landing-btns">
+    <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">⚡ CREATE GAME</button>
+    <button class="btn btn-secondary" onclick="showScreen('screen-join')">🎯 JOIN GAME</button>
+  </div>
+</div>
+
+<!-- ──────────────────────── ARBITER SETUP ──────────────────────── -->
+<div id="screen-arbiter-setup" class="screen">
+  <div class="top-bar">
+    <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
+    <div class="top-bar-title">NEW GAME</div>
+    <div style="width:60px"></div>
+  </div>
+  <div class="setup-scroll">
+    <div class="setup-inner">
+
+      <!-- Step 1: Room -->
+      <div class="setup-step">
+        <div class="step-title">01 — ROOM SETUP</div>
+        <div class="form-group">
+          <label>Your Name (Arbiter)</label>
+          <input id="setup-arbiter-name" type="text" placeholder="e.g. Alex" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Room Password</label>
+          <input id="setup-password" type="text" placeholder="e.g. party2025" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Grid Size</label>
+          <select id="setup-grid-size">
+            <option value="3">3×3 (9 prompts) — Quick game</option>
+            <option value="4">4×4 (16 prompts)</option>
+            <option value="5" selected>5×5 (25 prompts) — Classic</option>
+            <option value="6">6×6 (36 prompts) — Marathon</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Step 2: Twilio -->
+      <div class="setup-step">
+        <div class="step-title">02 — SMS (OPTIONAL)</div>
+        <div class="form-group">
+          <label>Your Phone (for notifications)</label>
+          <input id="setup-arbiter-phone" type="tel" placeholder="+1 555 000 0000" />
+        </div>
+        <div class="form-group">
+          <label>Twilio Account SID</label>
+          <input id="setup-twilio-sid" type="text" placeholder="ACxxxxxxxxxxxxxxxx" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Twilio Auth Token</label>
+          <input id="setup-twilio-token" type="password" placeholder="Auth token" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Twilio From Number</label>
+          <input id="setup-twilio-from" type="tel" placeholder="+1 555 000 0000" />
+        </div>
+        <p style="font-size:12px;color:var(--muted);">Leave blank to skip SMS. Participants add their numbers when they join.</p>
+      </div>
+
+      <!-- Step 3: Prompts -->
+      <div class="setup-step">
+        <div class="step-title">03 — CHALLENGE PROMPTS</div>
+        <div class="add-prompt-row">
+          <input id="prompt-input" type="text" placeholder="e.g. Do 10 pushups" autocomplete="off" />
+          <button class="btn btn-primary btn-sm" onclick="addPrompt()">ADD</button>
+        </div>
+        <div class="prompt-counter">
+          <span id="prompt-count">0</span> prompts added (need <span id="needed-count">25</span>)
+        </div>
+        <div id="prompt-list" class="prompt-list">
+          <div class="empty-state">No prompts yet. Add some challenges!</div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick="createRoom()" style="margin-top:8px;">🎲 CREATE ROOM</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── JOIN ──────────────────────── -->
+<div id="screen-join" class="screen">
+  <div class="join-logo">JOIN</div>
+  <div class="join-form">
+    <div class="form-group">
+      <label>Room Code</label>
+      <input id="join-code" type="text" placeholder="XXXXX" autocomplete="off" style="text-transform:uppercase;font-family:var(--font-display);font-size:22px;letter-spacing:0.2em;text-align:center;" maxlength="5" />
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input id="join-password" type="text" placeholder="Room password" autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label>Your Name</label>
+      <input id="join-name" type="text" placeholder="e.g. Jordan" autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label>Phone for SMS (optional)</label>
+      <input id="join-phone" type="tel" placeholder="+1 555 000 0000" />
+    </div>
+    <button class="btn btn-primary" onclick="joinRoom()">JOIN GAME →</button>
+    <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
+  </div>
+</div>
+
+<!-- ──────────────────────── PARTICIPANT BOARD ──────────────────────── -->
+<div id="screen-participant" class="screen">
+  <div class="top-bar">
+    <div>
+      <span class="status-dot"></span>
+      <span id="p-player-name" style="font-weight:700;font-size:15px;"></span>
+    </div>
+    <div class="top-bar-title">BINGO</div>
+    <div class="room-badge" id="p-room-code"></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
+    <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
+    <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <!-- Card Tab -->
+    <div id="p-tab-card" class="tab-panel active" style="padding:12px 8px 24px;">
+      <div class="bingo-wrapper">
+        <div id="p-bingo-header" class="bingo-header"></div>
+        <div id="p-bingo-grid" class="bingo-grid"></div>
+      </div>
+    </div>
+
+    <!-- Players Tab -->
+    <div id="p-tab-players" class="tab-panel" style="padding:16px;">
+      <div class="section-header">PLAYERS</div>
+      <div id="p-participants" class="participant-grid">
+        <div class="empty-state">Waiting for players...</div>
+      </div>
+    </div>
+
+    <!-- Feed Tab -->
+    <div id="p-tab-feed" class="tab-panel" style="padding:16px;">
+      <div class="section-header">ACTIVITY</div>
+      <div id="p-feed" class="activity-feed">
+        <div class="empty-state">No activity yet!</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── ARBITER DASHBOARD ──────────────────────── -->
+<div id="screen-arbiter" class="screen">
+  <div class="top-bar">
+    <div>
+      <span class="status-dot"></span>
+      <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
+    </div>
+    <div class="top-bar-title">ARBITER</div>
+    <div class="room-badge" id="a-room-code" style="cursor:pointer;" onclick="copyRoomCode()"></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab(this,'a-tab-players')">PLAYERS</button>
+    <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
+    <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
+    <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <!-- Players Tab -->
+    <div id="a-tab-players" class="tab-panel active" style="padding:16px;">
+      <div class="section-header">PARTICIPANTS (<span id="a-player-count">0</span>)</div>
+      <div id="a-participants" class="participant-grid">
+        <div class="empty-state">Share the room code — waiting for players to join!</div>
+      </div>
+    </div>
+
+    <!-- Card Tab (arbiter's own card) -->
+    <div id="a-tab-card" class="tab-panel" style="padding:12px 8px 24px;">
+      <div class="bingo-wrapper">
+        <div id="a-bingo-header" class="bingo-header"></div>
+        <div id="a-bingo-grid" class="bingo-grid"></div>
+      </div>
+    </div>
+
+    <!-- Feed Tab -->
+    <div id="a-tab-feed" class="tab-panel" style="padding:16px;">
+      <div class="section-header">ACTIVITY</div>
+      <div id="a-feed" class="activity-feed">
+        <div class="empty-state">No activity yet!</div>
+      </div>
+    </div>
+
+    <!-- Info Tab -->
+    <div id="a-tab-info" class="tab-panel" style="padding:16px;">
+      <div class="section-header">ROOM INFO</div>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px;">
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;">
+          <div class="info-row">
+            <span>Room Code</span>
+            <strong id="info-room-code" style="font-family:var(--font-display);font-size:22px;color:var(--accent);letter-spacing:0.15em;"></strong>
+          </div>
+          <div class="info-row">
+            <span>Join URL</span>
+            <button class="copy-btn" onclick="copyJoinLink()">Copy Link</button>
+          </div>
+          <div class="info-row">
+            <span>Grid Size</span>
+            <strong id="info-grid-size"></strong>
+          </div>
+          <div class="info-row">
+            <span>Players</span>
+            <strong id="info-player-count">0</strong>
+          </div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <div class="section-header" style="margin:0 0 12px;">ALL PROMPTS</div>
+          <div id="info-prompts" class="prompt-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── BINGO OVERLAY ──────────────────────── -->
+<div id="bingo-overlay">
+  <div class="bingo-big-text">BINGO!</div>
+  <div class="bingo-overlay-name" id="bingo-overlay-name"></div>
+  <button class="btn btn-secondary" onclick="closeBingoOverlay()" style="margin-top:16px;">Dismiss</button>
+</div>
+
+<!-- ──────────────────────── TOAST ──────────────────────── -->
+<div id="toast"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ── STATE ──
+let socket = null;
+let currentRoom = null;
+let myParticipantId = null;
+let myCard = [];
+let myChecked = new Set();
+let gridSize = 5;
+let arbiterId = 'arbiter-' + Math.random().toString(36).substring(2, 9);
+let prompts = [];
+let activityLog = [];
+let arbiterCard = [];
+let arbiterChecked = new Set();
+
+// ── UTILS ──
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function showToast(msg, duration = 3000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+function switchTab(btn, panelId) {
+  const tabs = btn.parentElement;
+  tabs.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  const panels = btn.closest('.screen').querySelectorAll('.tab-panel');
+  panels.forEach(p => p.classList.remove('active'));
+  document.getElementById(panelId).classList.add('active');
+}
+
+function initSocket() {
+  if (socket) return;
+  socket = io();
+  socket.on('error', (msg) => showToast('⚠️ ' + msg));
+  socket.on('activity', (data) => {
+    addActivity(data.message, false);
+  });
+  socket.on('bingo', (data) => {
+    addActivity(data.message, true);
+    showBingoOverlay(data.participantName);
+  });
+  socket.on('room:update', (data) => {
+    updateParticipantDisplays(data.participants);
+  });
+}
+
+// ── PROMPT MANAGEMENT ──
+document.getElementById('setup-grid-size').addEventListener('change', updateNeededCount);
+
+function updateNeededCount() {
+  const sz = parseInt(document.getElementById('setup-grid-size').value);
+  document.getElementById('needed-count').textContent = sz * sz;
+}
+
+document.getElementById('prompt-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addPrompt();
+});
+
+function addPrompt() {
+  const input = document.getElementById('prompt-input');
+  const val = input.value.trim();
+  if (!val) return;
+  prompts.push(val);
+  input.value = '';
+  renderPromptList();
+}
+
+function removePrompt(idx) {
+  prompts.splice(idx, 1);
+  renderPromptList();
+}
+
+function renderPromptList() {
+  const list = document.getElementById('prompt-list');
+  document.getElementById('prompt-count').textContent = prompts.length;
+  if (prompts.length === 0) {
+    list.innerHTML = '<div class="empty-state">No prompts yet. Add some challenges!</div>';
+    return;
+  }
+  list.innerHTML = prompts.map((p, i) => `
+    <div class="prompt-item">
+      <span class="prompt-num">${i+1}</span>
+      <span>${p}</span>
+      <button class="prompt-del" onclick="removePrompt(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+// ── CREATE ROOM ──
+async function createRoom() {
+  const name = document.getElementById('setup-arbiter-name').value.trim();
+  const password = document.getElementById('setup-password').value.trim();
+  const sz = parseInt(document.getElementById('setup-grid-size').value);
+  const phone = document.getElementById('setup-arbiter-phone').value.trim();
+  const sid = document.getElementById('setup-twilio-sid').value.trim();
+  const token = document.getElementById('setup-twilio-token').value.trim();
+  const from = document.getElementById('setup-twilio-from').value.trim();
+
+  if (!name) return showToast('Enter your name!');
+  if (!password) return showToast('Set a room password!');
+  if (prompts.length < sz * sz) return showToast(`Need ${sz * sz} prompts for a ${sz}×${sz} grid (have ${prompts.length})`);
+
+  const body = {
+    password, gridSize: sz, prompts,
+    arbiterId, arbiterName: name, arbiterPhone: phone,
+    twilioConfig: sid ? { accountSid: sid, authToken: token, fromNumber: from } : null
+  };
+
+  try {
+    const resp = await fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json();
+    if (!resp.ok) return showToast(data.error || 'Failed to create room');
+
+    currentRoom = data.roomCode;
+    gridSize = sz;
+
+    initSocket();
+    socket.emit('arbiter:join', { roomCode: currentRoom, arbiterId });
+    socket.on('arbiter:joined', (roomData) => {
+      setupArbiterDashboard(name, roomData);
+    });
+
+    socket.on('cell:updated', (data) => {
+      arbiterChecked = new Set(data.checked);
+      renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
+      if (data.hasBingo) showToast('🎉 You got BINGO!');
+    });
+
+  } catch (err) {
+    showToast('Server error. Make sure the server is running.');
+  }
+}
+
+function setupArbiterDashboard(name, roomData) {
+  document.getElementById('a-arbiter-name').textContent = name;
+  document.getElementById('a-room-code').textContent = roomData.roomCode;
+  document.getElementById('info-room-code').textContent = roomData.roomCode;
+  document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
+
+  // Give arbiter a card
+  const shuffled = shuffleArray([...roomData.prompts]).slice(0, roomData.gridSize * roomData.gridSize);
+  const center = Math.floor(shuffled.length / 2);
+  if (roomData.gridSize % 2 === 1) shuffled[center] = 'FREE';
+  arbiterCard = shuffled;
+  arbiterChecked = new Set(roomData.gridSize % 2 === 1 ? [center] : []);
+
+  renderBingoHeader('a-bingo-header', roomData.gridSize);
+  renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, roomData.gridSize, true);
+
+  // Info prompts
+  document.getElementById('info-prompts').innerHTML = roomData.prompts.map((p, i) =>
+    `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${p}</span></div>`
+  ).join('');
+
+  updateParticipantDisplays(Object.values(roomData.participants || {}));
+
+  showScreen('screen-arbiter');
+}
+
+// ── JOIN ROOM ──
+async function joinRoom() {
+  const code = document.getElementById('join-code').value.trim().toUpperCase();
+  const password = document.getElementById('join-password').value.trim();
+  const name = document.getElementById('join-name').value.trim();
+  const phone = document.getElementById('join-phone').value.trim();
+
+  if (!code) return showToast('Enter a room code!');
+  if (!password) return showToast('Enter the password!');
+  if (!name) return showToast('Enter your name!');
+
+  initSocket();
+  socket.emit('participant:join', { roomCode: code, password, name, phone });
+
+  socket.off('participant:joined');
+  socket.on('participant:joined', (data) => {
+    currentRoom = data.roomCode;
+    myParticipantId = data.participantId;
+    myCard = data.card;
+    myChecked = new Set(data.checked);
+    gridSize = data.gridSize;
+
+    document.getElementById('p-player-name').textContent = name;
+    document.getElementById('p-room-code').textContent = data.roomCode;
+
+    renderBingoHeader('p-bingo-header', gridSize);
+    renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+
+    socket.on('cell:updated', (upd) => {
+      myChecked = new Set(upd.checked);
+      renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+      if (upd.hasBingo) showToast('🎉 BINGO! You did it!');
+    });
+
+    showScreen('screen-participant');
+  });
+}
+
+// ── BINGO GRID RENDERING ──
+const BINGO_LETTERS = ['B','I','N','G','O','E','X','T','R','A'];
+
+function renderBingoHeader(containerId, size) {
+  const el = document.getElementById(containerId);
+  const letters = size <= 5 ? 'BINGO'.slice(0, size) : BINGO_LETTERS.slice(0, size);
+  el.innerHTML = letters.split('').map(l => `<div class="bingo-letter">${l}</div>`).join('');
+}
+
+function renderBingoGrid(gridId, card, checked, size, isArbiter) {
+  const grid = document.getElementById(gridId);
+  grid.style.gridTemplateColumns = `repeat(${size}, 1fr)`;
+  const center = Math.floor((size * size) / 2);
+
+  grid.innerHTML = card.map((text, i) => {
+    const isFree = text === 'FREE';
+    const isChecked = checked.has(i);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
+    const onclick = isFree ? '' : `onclick="toggleCell(${i}, ${isArbiter})"`;
+    return `<div class="${classes}" ${onclick}><span class="bingo-cell-text">${text}</span></div>`;
+  }).join('');
+}
+
+function toggleCell(index, isArbiter) {
+  if (!socket || !currentRoom) return;
+  socket.emit('cell:check', { roomCode: currentRoom, cellIndex: index });
+}
+
+// ── PARTICIPANTS ──
+function updateParticipantDisplays(participants) {
+  const total = gridSize * gridSize;
+  renderParticipants('p-participants', participants, total);
+  renderParticipants('a-participants', participants, total);
+  document.getElementById('a-player-count').textContent = participants.length;
+  document.getElementById('info-player-count').textContent = participants.length;
+}
+
+function renderParticipants(containerId, participants, total) {
+  const el = document.getElementById(containerId);
+  if (!participants || participants.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No players yet...</div>';
+    return;
+  }
+  el.innerHTML = participants.map(p => {
+    const pct = Math.round((p.checked.length / total) * 100);
+    return `
+      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}">
+        <div class="participant-name">${p.id === myParticipantId ? '⭐ ' : ''}${p.name}</div>
+        ${p.hasBingo ? '<div class="bingo-tag">🎉 BINGO!</div>' : `
+          <div class="participant-progress">
+            <div class="participant-progress-bar" style="width:${pct}%"></div>
+          </div>
+          <div class="participant-stat">${p.checked.length}/${total} checked</div>
+        `}
+      </div>
+    `;
+  }).join('');
+}
+
+// ── ACTIVITY FEED ──
+function addActivity(message, isBingo) {
+  activityLog.unshift({ message, isBingo, time: new Date() });
+  renderFeed('p-feed');
+  renderFeed('a-feed');
+  showToast(message);
+}
+
+function renderFeed(containerId) {
+  const el = document.getElementById(containerId);
+  if (activityLog.length === 0) {
+    el.innerHTML = '<div class="empty-state">No activity yet!</div>';
+    return;
+  }
+  el.innerHTML = activityLog.slice(0, 50).map(item => `
+    <div class="activity-item ${item.isBingo ? 'bingo-event' : ''}">
+      ${item.message}
+      <div class="activity-time">${formatTime(item.time)}</div>
+    </div>
+  `).join('');
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── BINGO OVERLAY ──
+function showBingoOverlay(name) {
+  document.getElementById('bingo-overlay-name').textContent = name + ' got BINGO!';
+  document.getElementById('bingo-overlay').classList.add('show');
+  spawnConfetti();
+  setTimeout(closeBingoOverlay, 4000);
+}
+
+function closeBingoOverlay() {
+  document.getElementById('bingo-overlay').classList.remove('show');
+}
+
+function spawnConfetti() {
+  const colors = ['#e8ff47','#ff4f7b','#47d4ff','#ffffff','#ffaa00'];
+  for (let i = 0; i < 40; i++) {
+    const el = document.createElement('div');
+    el.className = 'confetti-piece';
+    el.style.cssText = `
+      left: ${Math.random() * 100}vw;
+      top: -10px;
+      background: ${colors[Math.floor(Math.random() * colors.length)]};
+      animation-delay: ${Math.random() * 0.8}s;
+      animation-duration: ${1.5 + Math.random() * 1.5}s;
+      transform: rotate(${Math.random() * 360}deg);
+      width: ${6 + Math.random() * 10}px;
+      height: ${6 + Math.random() * 10}px;
+    `;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+  }
+}
+
+// ── COPY HELPERS ──
+function copyRoomCode() {
+  navigator.clipboard?.writeText(currentRoom).then(() => showToast('Room code copied!'));
+}
+
+function copyJoinLink() {
+  const url = `${location.origin}/?join=${currentRoom}`;
+  navigator.clipboard?.writeText(url).then(() => showToast('Join link copied!'));
+}
+
+// ── SHUFFLE ──
+function shuffleArray(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// ── AUTO-JOIN FROM URL ──
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(location.search);
+  const joinCode = params.get('join');
+  if (joinCode) {
+    document.getElementById('join-code').value = joinCode.toUpperCase();
+    showScreen('screen-join');
+  }
+  updateNeededCount();
+});
+</script>
+</body>
+</html>
