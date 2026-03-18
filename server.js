@@ -13,7 +13,7 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ✅ Twilio config (E.164 REQUIRED)
+// ✅ Twilio config (E.164 format REQUIRED)
 const globalTwilioConfig = {
     accountSid: 'AC6b6f24faa2be6118f13f2034a9be9b54',
     authToken: '94657acedb889418acb80f550c2ec7cf',
@@ -25,8 +25,11 @@ console.log('Twilio SMS enabled globally');
 // In-memory store
 const rooms = {};
 
+// =======================
+// 🔥 PHONE HELPERS
+// =======================
 
-// 🔥 SLOT-BASED PHONE BUILDER (primary system)
+// Slot-based input (preferred)
 function buildPhoneNumber({ area, prefix, line }) {
     if (!area || !prefix || !line) return null;
 
@@ -36,7 +39,7 @@ function buildPhoneNumber({ area, prefix, line }) {
     return `+1${digits}`;
 }
 
-// 🔥 FALLBACK (old string support)
+// Fallback (string input)
 function normalizePhone(input) {
     if (!input) return null;
 
@@ -48,6 +51,9 @@ function normalizePhone(input) {
     return null;
 }
 
+// =======================
+// 🔥 UTIL FUNCTIONS
+// =======================
 
 function generateRoomCode() {
     return Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -81,6 +87,10 @@ function checkBingo(checked, gridSize) {
     return false;
 }
 
+// =======================
+// 🔥 SMS FUNCTION
+// =======================
+
 async function sendSMS(twilioConfig, to, message) {
     try {
         const client = twilio(twilioConfig.accountSid, twilioConfig.authToken);
@@ -93,16 +103,35 @@ async function sendSMS(twilioConfig, to, message) {
             to
         });
 
-        console.log("SMS success:", res.sid);
+        console.log("SMS sent:", res.sid);
     } catch (err) {
-        console.error("Twilio FULL error:", err);
+        console.error("Twilio ERROR:", err);
     }
 }
 
+// Send SMS to all participants + arbiter
+function sendToAll(room, message) {
+    if (!room.twilioConfig?.accountSid) return;
+
+    const targets = Object.values(room.participants)
+        .map(p => p.phone)
+        .filter(Boolean);
+
+    if (room.arbiter.phone) {
+        targets.push(room.arbiter.phone);
+    }
+
+    const unique = [...new Set(targets)];
+
+    for (const phone of unique) {
+        sendSMS(room.twilioConfig, phone, message);
+    }
+}
 
 // =======================
 // 🔥 CREATE ROOM (FIXED)
 // =======================
+
 app.post('/api/rooms', (req, res) => {
     const {
         password,
@@ -120,7 +149,6 @@ app.post('/api/rooms', (req, res) => {
 
     const roomCode = generateRoomCode();
 
-    // ✅ Support BOTH formats
     let formattedArbiterPhone = null;
 
     if (arbiterPhoneSlots && arbiterPhoneSlots.area) {
@@ -150,10 +178,10 @@ app.post('/api/rooms', (req, res) => {
     res.json({ roomCode });
 });
 
-
 // =======================
 // BASIC ROUTES
 // =======================
+
 app.get('/api/rooms/:code', (req, res) => {
     const room = rooms[req.params.code.toUpperCase()];
     if (!room) return res.status(404).json({ error: 'Room not found' });
@@ -168,10 +196,10 @@ app.get('/api/sms-status', (req, res) => {
     res.json({ enabled: true });
 });
 
-
 // =======================
 // SOCKET LOGIC
 // =======================
+
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
@@ -180,7 +208,6 @@ io.on('connection', (socket) => {
         if (!room) return socket.emit('error', 'Room not found');
         if (room.password !== password) return socket.emit('error', 'Wrong password');
 
-        // ✅ Support BOTH formats
         let formattedPhone = null;
 
         if (phoneSlots && phoneSlots.area) {
@@ -231,7 +258,6 @@ io.on('connection', (socket) => {
         });
     });
 
-
     socket.on('cell:check', async ({ roomCode, cellIndex }) => {
         const code = roomCode?.toUpperCase();
         const room = rooms[code];
@@ -256,7 +282,7 @@ io.on('connection', (socket) => {
             hasBingo: participant.hasBingo
         });
 
-        // ✅ ACTIVITY SMS
+        // Activity SMS
         if (checkedSet.has(cellIndex) && promptText !== 'FREE') {
             const message = `🎯 ${participant.name} has ${promptText}!`;
 
@@ -269,7 +295,7 @@ io.on('connection', (socket) => {
             sendToAll(room, message);
         }
 
-        // ✅ BINGO SMS
+        // Bingo SMS
         if (!hadBingo && participant.hasBingo) {
             const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
 
@@ -285,28 +311,30 @@ io.on('connection', (socket) => {
             participants: sanitizeParticipants(room.participants)
         });
     });
+
+    socket.on('disconnect', () => {
+        for (const [code, room] of Object.entries(rooms)) {
+            if (room.participants[socket.id]) {
+                const name = room.participants[socket.id].name;
+                delete room.participants[socket.id];
+
+                io.to(code).emit('room:update', {
+                    participants: sanitizeParticipants(room.participants)
+                });
+
+                io.to(code).emit('activity', {
+                    message: `${name} left the game`,
+                    participantName: name
+                });
+            }
+        }
+    });
 });
 
+// =======================
+// CLEAN OUTPUT
+// =======================
 
-// 🔥 CENTRALIZED SMS SENDER
-function sendToAll(room, message) {
-    if (!room.twilioConfig?.accountSid) return;
-
-    const targets = Object.values(room.participants)
-        .map(p => p.phone)
-        .filter(Boolean);
-
-    if (room.arbiter.phone) targets.push(room.arbiter.phone);
-
-    const unique = [...new Set(targets)];
-
-    for (const phone of unique) {
-        sendSMS(room.twilioConfig, phone, message);
-    }
-}
-
-
-// CLEAN DATA
 function sanitizeParticipants(participants) {
     return Object.values(participants).map(p => ({
         id: p.id,
@@ -317,6 +345,11 @@ function sanitizeParticipants(participants) {
     }));
 }
 
+// =======================
+// START SERVER
+// =======================
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Bingo server running on port ${PORT}`));
+server.listen(PORT, () => {
+    console.log(`Bingo server running on port ${PORT}`);
+});
