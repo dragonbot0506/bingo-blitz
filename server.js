@@ -38,20 +38,37 @@ function shuffleArray(arr) {
     return a;
 }
 
+// 🔥 NEW: phone formatter + validator
+function formatPhoneNumber(input) {
+    if (!input) return null;
+
+    const digits = input.replace(/\D/g, '');
+
+    let normalized = digits;
+    if (digits.length === 11 && digits.startsWith('1')) {
+        normalized = digits.slice(1);
+    }
+
+    if (normalized.length !== 10) return null;
+
+    const area = normalized.slice(0, 3);
+    const prefix = normalized.slice(3, 6);
+    const line = normalized.slice(6);
+
+    return `+1-${area}-${prefix}-${line}`;
+}
+
 function checkBingo(checked, gridSize) {
     const grid = Array.from({ length: gridSize }, (_, r) =>
           Array.from({ length: gridSize }, (_, c) => checked.has(r * gridSize + c))
                               );
-    // Rows
-  for (let r = 0; r < gridSize; r++) {
+    for (let r = 0; r < gridSize; r++) {
         if (grid[r].every(Boolean)) return true;
-  }
-    // Cols
-  for (let c = 0; c < gridSize; c++) {
+    }
+    for (let c = 0; c < gridSize; c++) {
         if (grid.every(row => row[c])) return true;
-  }
-    // Diagonals
-  if (grid.every((row, i) => row[i])) return true;
+    }
+    if (grid.every((row, i) => row[i])) return true;
     if (grid.every((row, i) => row[gridSize - 1 - i])) return true;
     return false;
 }
@@ -76,18 +93,25 @@ app.post('/api/rooms', (req, res) => {
           return res.status(400).json({ error: `Need at least ${gridSize * gridSize} prompts for a ${gridSize}x${gridSize} grid` });
     }
 
-           const roomCode = generateRoomCode();
+    const roomCode = generateRoomCode();
     const effectiveTwilioConfig = globalTwilioConfig || twilioConfig || null;
 
-           rooms[roomCode] = {
-                 password,
-                 gridSize,
-                 prompts,
-                 participants: {},
-                 twilioConfig: effectiveTwilioConfig,
-                 arbiter: { id: arbiterId, name: arbiterName, phone: arbiterPhone },
-                 createdAt: Date.now()
-           };
+    // 🔥 format arbiter phone
+    const formattedArbiterPhone = formatPhoneNumber(arbiterPhone);
+    if (arbiterPhone && !formattedArbiterPhone) {
+        return res.status(400).json({ error: 'Invalid arbiter phone number' });
+    }
+
+    rooms[roomCode] = {
+        password,
+        gridSize,
+        prompts,
+        participants: {},
+        twilioConfig: effectiveTwilioConfig,
+        arbiter: { id: arbiterId, name: arbiterName, phone: formattedArbiterPhone },
+        createdAt: Date.now()
+    };
+
     res.json({ roomCode });
 });
 
@@ -106,150 +130,156 @@ app.get('/api/sms-status', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-        socket.on('arbiter:join', ({ roomCode, arbiterId }) => {
-              const room = rooms[roomCode];
-              if (!room) return socket.emit('error', 'Room not found');
-              socket.join(roomCode);
-              socket.emit('arbiter:joined', {
-                      roomCode,
-                      gridSize: room.gridSize,
-                      prompts: room.prompts,
-                      participants: room.participants
-              });
+    socket.on('arbiter:join', ({ roomCode, arbiterId }) => {
+        const room = rooms[roomCode];
+        if (!room) return socket.emit('error', 'Room not found');
+        socket.join(roomCode);
+        socket.emit('arbiter:joined', {
+            roomCode,
+            gridSize: room.gridSize,
+            prompts: room.prompts,
+            participants: room.participants
+        });
+    });
+
+    socket.on('participant:join', ({ roomCode, password, name, phone }) => {
+        const room = rooms[roomCode?.toUpperCase()];
+        if (!room) return socket.emit('error', 'Room not found');
+        if (room.password !== password) return socket.emit('error', 'Wrong password');
+
+        // 🔥 format participant phone
+        const formattedPhone = formatPhoneNumber(phone);
+        if (phone && !formattedPhone) {
+            return socket.emit('error', 'Invalid phone number');
+        }
+
+        const code = roomCode.toUpperCase();
+        const participantId = socket.id;
+
+        const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
+        const totalCells = room.gridSize * room.gridSize;
+        const centerIdx = Math.floor(totalCells / 2);
+        let card = [...shuffled];
+        if (room.gridSize % 2 === 1) {
+            card[centerIdx] = 'FREE';
+        }
+        const checked = new Set(room.gridSize % 2 === 1 ? [centerIdx] : []);
+
+        room.participants[participantId] = {
+            id: participantId,
+            name,
+            phone: formattedPhone,
+            card,
+            checked: [...checked],
+            hasBingo: false
+        };
+
+        socket.join(code);
+        socket.emit('participant:joined', {
+            participantId,
+            card,
+            checked: [...checked],
+            gridSize: room.gridSize,
+            roomCode: code
         });
 
-        socket.on('participant:join', ({ roomCode, password, name, phone }) => {
-              const room = rooms[roomCode?.toUpperCase()];
-              if (!room) return socket.emit('error', 'Room not found');
-              if (room.password !== password) return socket.emit('error', 'Wrong password');
+        io.to(code).emit('room:update', {
+            participants: sanitizeParticipants(room.participants)
+        });
+    });
 
-                      const code = roomCode.toUpperCase();
-              const participantId = socket.id;
+    socket.on('cell:check', async ({ roomCode, cellIndex }) => {
+        const code = roomCode?.toUpperCase();
+        const room = rooms[code];
+        if (!room) return;
 
-                      const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
-              const totalCells = room.gridSize * room.gridSize;
-              const centerIdx = Math.floor(totalCells / 2);
-              let card = [...shuffled];
-              if (room.gridSize % 2 === 1) {
-                      card[centerIdx] = 'FREE';
-              }
-              const checked = new Set(room.gridSize % 2 === 1 ? [centerIdx] : []);
+        const participant = room.participants[socket.id];
+        if (!participant) return;
 
-                      room.participants[participantId] = {
-                              id: participantId,
-                              name,
-                              phone,
-                              card,
-                              checked: [...checked],
-                              hasBingo: false
-                      };
+        const checkedSet = new Set(participant.checked);
+        if (checkedSet.has(cellIndex)) {
+            checkedSet.delete(cellIndex);
+        } else {
+            checkedSet.add(cellIndex);
+        }
+        participant.checked = [...checkedSet];
 
-                      socket.join(code);
-              socket.emit('participant:joined', {
-                      participantId,
-                      card,
-                      checked: [...checked],
-                      gridSize: room.gridSize,
-                      roomCode: code
-              });
+        const promptText = participant.card[cellIndex];
+        const hadBingo = participant.hasBingo;
+        participant.hasBingo = checkBingo(checkedSet, room.gridSize);
 
-                      io.to(code).emit('room:update', {
-                              participants: sanitizeParticipants(room.participants)
-                      });
+        socket.emit('cell:updated', {
+            checked: participant.checked,
+            hasBingo: participant.hasBingo
         });
 
-        socket.on('cell:check', async ({ roomCode, cellIndex }) => {
-              const code = roomCode?.toUpperCase();
-              const room = rooms[code];
-              if (!room) return;
-
-                      const participant = room.participants[socket.id];
-              if (!participant) return;
-
-                      const checkedSet = new Set(participant.checked);
-              if (checkedSet.has(cellIndex)) {
-                      checkedSet.delete(cellIndex);
-              } else {
-                      checkedSet.add(cellIndex);
-              }
-              participant.checked = [...checkedSet];
-
-                      const promptText = participant.card[cellIndex];
-              const hadBingo = participant.hasBingo;
-              participant.hasBingo = checkBingo(checkedSet, room.gridSize);
-
-                      socket.emit('cell:updated', {
-                              checked: participant.checked,
-                              hasBingo: participant.hasBingo
-                      });
-
-                      if (!checkedSet.has(cellIndex) === false || checkedSet.has(cellIndex)) {
-                              const action = checkedSet.has(cellIndex) ? 'completed' : 'unchecked';
-                              if (action === 'completed' && promptText !== 'FREE') {
-                                        const message = `🎯 ${participant.name} has ${promptText}!`;
-                                        io.to(code).emit('activity', { message, participantName: participant.name, prompt: promptText });
-
-                                if (room.twilioConfig?.accountSid) {
-                                            const allParticipants = Object.values(room.participants);
-                                            const smsTargets = allParticipants.filter(p => p.phone && p.phone.trim());
-                                            if (room.arbiter.phone) {
-                                                          smsTargets.push({ phone: room.arbiter.phone, name: room.arbiter.name });
-                                            }
-                                            const seen = new Set();
-                                            for (const target of smsTargets) {
-                                                          if (!seen.has(target.phone)) {
-                                                                          seen.add(target.phone);
-                                                                          sendSMS(room.twilioConfig, target.phone, message);
-                                                          }
-                                            }
-                                }
-                              }
-                      }
-
-                      if (!hadBingo && participant.hasBingo) {
-                              const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
-                              io.to(code).emit('bingo', { participantName: participant.name, message: bingoMsg });
+        if (!checkedSet.has(cellIndex) === false || checkedSet.has(cellIndex)) {
+            const action = checkedSet.has(cellIndex) ? 'completed' : 'unchecked';
+            if (action === 'completed' && promptText !== 'FREE') {
+                const message = `🎯 ${participant.name} has ${promptText}!`;
+                io.to(code).emit('activity', { message, participantName: participant.name, prompt: promptText });
 
                 if (room.twilioConfig?.accountSid) {
-                          const allParticipants = Object.values(room.participants);
-                          const smsTargets = allParticipants.filter(p => p.phone);
-                          if (room.arbiter.phone) smsTargets.push({ phone: room.arbiter.phone });
-                          const seen = new Set();
-                          for (const t of smsTargets) {
-                                      if (!seen.has(t.phone)) {
-                                                    seen.add(t.phone);
-                                                    sendSMS(room.twilioConfig, t.phone, bingoMsg);
-                                      }
-                          }
+                    const allParticipants = Object.values(room.participants);
+                    const smsTargets = allParticipants.filter(p => p.phone && p.phone.trim());
+                    if (room.arbiter.phone) {
+                        smsTargets.push({ phone: room.arbiter.phone, name: room.arbiter.name });
+                    }
+                    const seen = new Set();
+                    for (const target of smsTargets) {
+                        if (!seen.has(target.phone)) {
+                            seen.add(target.phone);
+                            sendSMS(room.twilioConfig, target.phone, message);
+                        }
+                    }
                 }
-                      }
+            }
+        }
 
-                      io.to(code).emit('room:update', {
-                              participants: sanitizeParticipants(room.participants)
-                      });
-        });
+        if (!hadBingo && participant.hasBingo) {
+            const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
+            io.to(code).emit('bingo', { participantName: participant.name, message: bingoMsg });
 
-        socket.on('disconnect', () => {
-              for (const [code, room] of Object.entries(rooms)) {
-                      if (room.participants[socket.id]) {
-                                const name = room.participants[socket.id].name;
-                                delete room.participants[socket.id];
-                                io.to(code).emit('room:update', {
-                                            participants: sanitizeParticipants(room.participants)
-                                });
-                                io.to(code).emit('activity', { message: `${name} left the game`, participantName: name, prompt: null });
-                      }
-              }
+            if (room.twilioConfig?.accountSid) {
+                const allParticipants = Object.values(room.participants);
+                const smsTargets = allParticipants.filter(p => p.phone);
+                if (room.arbiter.phone) smsTargets.push({ phone: room.arbiter.phone });
+                const seen = new Set();
+                for (const t of smsTargets) {
+                    if (!seen.has(t.phone)) {
+                        seen.add(t.phone);
+                        sendSMS(room.twilioConfig, t.phone, bingoMsg);
+                    }
+                }
+            }
+        }
+
+        io.to(code).emit('room:update', {
+            participants: sanitizeParticipants(room.participants)
         });
+    });
+
+    socket.on('disconnect', () => {
+        for (const [code, room] of Object.entries(rooms)) {
+            if (room.participants[socket.id]) {
+                const name = room.participants[socket.id].name;
+                delete room.participants[socket.id];
+                io.to(code).emit('room:update', {
+                    participants: sanitizeParticipants(room.participants)
+                });
+                io.to(code).emit('activity', { message: `${name} left the game`, participantName: name, prompt: null });
+            }
+        }
+    });
 });
 
 function sanitizeParticipants(participants) {
     return Object.values(participants).map(p => ({
-          id: p.id,
-          name: p.name,
-          checked: p.checked,
-          card: p.card,
-          hasBingo: p.hasBingo
+        id: p.id,
+        name: p.name,
+        checked: p.checked,
+        card: p.card,
+        hasBingo: p.hasBingo
     }));
 }
 
