@@ -416,4 +416,4 @@ server.listen(PORT, () => {
     console.log(`Bingo server running on port ${PORT}`);
 });
 
-sendSMS('+1YOURNUMBER', 'It works 🔥');
+sendSMS('+19174457025', 'It works 🔥');
