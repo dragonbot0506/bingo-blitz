@@ -13,7 +13,7 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ✅ Twilio config (E.164 format REQUIRED)
+// Twilio config
 const globalTwilioConfig = {
     accountSid: 'AC6b6f24faa2be6118f13f2034a9be9b54',
     authToken: '94657acedb889418acb80f550c2ec7cf',
@@ -26,24 +26,26 @@ console.log('Twilio SMS enabled globally');
 const rooms = {};
 
 // =======================
-// 🔥 PHONE HELPERS
+// PHONE HELPERS
 // =======================
 
-// Slot-based input (preferred)
-function buildPhoneNumber({ area, prefix, line }) {
-    if (!area || !prefix || !line) return null;
+function buildPhoneNumber(phoneSlots) {
+    if (!phoneSlots || typeof phoneSlots !== 'object') return null;
 
-    const digits = `${area}${prefix}${line}`;
-    if (!/^\d{10}$/.test(digits)) return null;
+    const area = String(phoneSlots.area || '').replace(/\D/g, '');
+    const prefix = String(phoneSlots.prefix || '').replace(/\D/g, '');
+    const line = String(phoneSlots.line || '').replace(/\D/g, '');
 
-    return `+1${digits}`;
+    if (!area && !prefix && !line) return null;
+    if (area.length !== 3 || prefix.length !== 3 || line.length !== 4) return null;
+
+    return `+1${area}${prefix}${line}`;
 }
 
-// Fallback (string input)
 function normalizePhone(input) {
     if (!input) return null;
 
-    const digits = input.replace(/\D/g, '');
+    const digits = String(input).replace(/\D/g, '');
 
     if (digits.length === 10) return `+1${digits}`;
     if (digits.length === 11 && digits.startsWith('1')) return `+1${digits.slice(1)}`;
@@ -52,11 +54,15 @@ function normalizePhone(input) {
 }
 
 // =======================
-// 🔥 UTIL FUNCTIONS
+// UTIL FUNCTIONS
 // =======================
 
 function generateRoomCode() {
-    return Math.random().toString(36).substring(2, 7).toUpperCase();
+    let code = '';
+    do {
+        code = Math.random().toString(36).substring(2, 7).toUpperCase();
+    } while (rooms[code]);
+    return code;
 }
 
 function shuffleArray(arr) {
@@ -87,37 +93,51 @@ function checkBingo(checked, gridSize) {
     return false;
 }
 
+function sanitizeParticipants(participants) {
+    return Object.values(participants).map((p) => ({
+        id: p.id,
+        name: p.name,
+        checked: p.checked,
+        card: p.card,
+        hasBingo: p.hasBingo
+    }));
+}
+
 // =======================
-// 🔥 SMS FUNCTION
+// SMS
 // =======================
 
 async function sendSMS(twilioConfig, to, message) {
     try {
+        if (!twilioConfig?.accountSid || !twilioConfig?.authToken || !twilioConfig?.fromNumber) {
+            console.log('SMS skipped: missing Twilio config');
+            return;
+        }
+
         const client = twilio(twilioConfig.accountSid, twilioConfig.authToken);
 
-        console.log("Sending SMS →", to);
+        console.log('Sending SMS →', to, '|', message);
 
-        const res = await client.messages.create({
+        const result = await client.messages.create({
             body: message,
             from: twilioConfig.fromNumber,
             to
         });
 
-        console.log("SMS sent:", res.sid);
+        console.log('SMS sent:', result.sid);
     } catch (err) {
-        console.error("Twilio ERROR:", err);
+        console.error('Twilio ERROR:', err?.message || err);
     }
 }
 
-// Send SMS to all participants + arbiter
 function sendToAll(room, message) {
-    if (!room.twilioConfig?.accountSid) return;
+    if (!room?.twilioConfig?.accountSid) return;
 
     const targets = Object.values(room.participants)
-        .map(p => p.phone)
+        .map((p) => p.phone)
         .filter(Boolean);
 
-    if (room.arbiter.phone) {
+    if (room.arbiter?.phone) {
         targets.push(room.arbiter.phone);
     }
 
@@ -129,61 +149,80 @@ function sendToAll(room, message) {
 }
 
 // =======================
-// 🔥 CREATE ROOM (FIXED)
+// API ROUTES
 // =======================
 
 app.post('/api/rooms', (req, res) => {
-    const {
-        password,
-        gridSize,
-        prompts,
-        arbiterId,
-        arbiterName,
-        arbiterPhoneSlots,
-        arbiterPhone
-    } = req.body;
+    try {
+        console.log('CREATE ROOM BODY:', req.body);
 
-    if (!password || !gridSize || !prompts || prompts.length < gridSize * gridSize) {
-        return res.status(400).json({ error: 'Invalid room setup' });
+        const {
+            password,
+            gridSize,
+            prompts,
+            arbiterId,
+            arbiterName,
+            arbiterPhoneSlots,
+            arbiterPhone
+        } = req.body;
+
+        const parsedGridSize = Number(gridSize);
+
+        if (!password || typeof password !== 'string') {
+            return res.status(400).json({ error: 'Missing password' });
+        }
+
+        if (!Number.isInteger(parsedGridSize) || parsedGridSize < 2) {
+            return res.status(400).json({ error: 'Invalid grid size' });
+        }
+
+        if (!Array.isArray(prompts) || prompts.length < parsedGridSize * parsedGridSize) {
+            return res.status(400).json({
+                error: `Need at least ${parsedGridSize * parsedGridSize} prompts`
+            });
+        }
+
+        let formattedArbiterPhone = null;
+
+        if (arbiterPhoneSlots) {
+            formattedArbiterPhone = buildPhoneNumber(arbiterPhoneSlots);
+            if (!formattedArbiterPhone) {
+                return res.status(400).json({ error: 'Invalid arbiter phone number' });
+            }
+        } else if (arbiterPhone) {
+            formattedArbiterPhone = normalizePhone(arbiterPhone);
+            if (!formattedArbiterPhone) {
+                return res.status(400).json({ error: 'Invalid arbiter phone number' });
+            }
+        }
+
+        const roomCode = generateRoomCode();
+
+        rooms[roomCode] = {
+            password,
+            gridSize: parsedGridSize,
+            prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
+            participants: {},
+            twilioConfig: globalTwilioConfig,
+            arbiter: {
+                id: arbiterId || 'host',
+                name: arbiterName || 'Host',
+                phone: formattedArbiterPhone
+            },
+            createdAt: Date.now()
+        };
+
+        console.log('ROOM CREATED:', roomCode);
+
+        return res.json({ roomCode });
+    } catch (err) {
+        console.error('CREATE ROOM ERROR:', err);
+        return res.status(500).json({ error: 'Server failed to create room' });
     }
-
-    const roomCode = generateRoomCode();
-
-    let formattedArbiterPhone = null;
-
-    if (arbiterPhoneSlots && arbiterPhoneSlots.area) {
-        formattedArbiterPhone = buildPhoneNumber(arbiterPhoneSlots);
-    } else if (arbiterPhone) {
-        formattedArbiterPhone = normalizePhone(arbiterPhone);
-    }
-
-    if ((arbiterPhone || arbiterPhoneSlots) && !formattedArbiterPhone) {
-        return res.status(400).json({ error: 'Invalid arbiter phone number' });
-    }
-
-    rooms[roomCode] = {
-        password,
-        gridSize,
-        prompts,
-        participants: {},
-        twilioConfig: globalTwilioConfig,
-        arbiter: {
-            id: arbiterId,
-            name: arbiterName,
-            phone: formattedArbiterPhone
-        },
-        createdAt: Date.now()
-    };
-
-    res.json({ roomCode });
 });
 
-// =======================
-// BASIC ROUTES
-// =======================
-
 app.get('/api/rooms/:code', (req, res) => {
-    const room = rooms[req.params.code.toUpperCase()];
+    const room = rooms[String(req.params.code || '').toUpperCase()];
     if (!room) return res.status(404).json({ error: 'Room not found' });
 
     res.json({
@@ -203,147 +242,170 @@ app.get('/api/sms-status', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    socket.on('participant:join', ({ roomCode, password, name, phoneSlots, phone }) => {
-        const room = rooms[roomCode?.toUpperCase()];
-        if (!room) return socket.emit('error', 'Room not found');
-        if (room.password !== password) return socket.emit('error', 'Wrong password');
+    socket.on('arbiter:join', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return socket.emit('error', 'Room not found');
 
-        let formattedPhone = null;
-
-        if (phoneSlots && phoneSlots.area) {
-            formattedPhone = buildPhoneNumber(phoneSlots);
-        } else if (phone) {
-            formattedPhone = normalizePhone(phone);
+            socket.join(code);
+            socket.emit('arbiter:joined', {
+                roomCode: code,
+                gridSize: room.gridSize,
+                prompts: room.prompts,
+                participants: room.participants
+            });
+        } catch (err) {
+            console.error('arbiter:join error:', err);
+            socket.emit('error', 'Failed to join as arbiter');
         }
-
-        if ((phone || phoneSlots) && !formattedPhone) {
-            return socket.emit('error', 'Invalid phone number');
-        }
-
-        const code = roomCode.toUpperCase();
-        const participantId = socket.id;
-
-        const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
-        const totalCells = room.gridSize * room.gridSize;
-        const centerIdx = Math.floor(totalCells / 2);
-
-        let card = [...shuffled];
-        if (room.gridSize % 2 === 1) {
-            card[centerIdx] = 'FREE';
-        }
-
-        const checked = new Set(room.gridSize % 2 === 1 ? [centerIdx] : []);
-
-        room.participants[participantId] = {
-            id: participantId,
-            name,
-            phone: formattedPhone,
-            card,
-            checked: [...checked],
-            hasBingo: false
-        };
-
-        socket.join(code);
-
-        socket.emit('participant:joined', {
-            participantId,
-            card,
-            checked: [...checked],
-            gridSize: room.gridSize,
-            roomCode: code
-        });
-
-        io.to(code).emit('room:update', {
-            participants: sanitizeParticipants(room.participants)
-        });
     });
 
-    socket.on('cell:check', async ({ roomCode, cellIndex }) => {
-        const code = roomCode?.toUpperCase();
-        const room = rooms[code];
-        if (!room) return;
+    socket.on('participant:join', ({ roomCode, password, name, phoneSlots, phone }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
 
-        const participant = room.participants[socket.id];
-        if (!participant) return;
+            if (!room) return socket.emit('error', 'Room not found');
+            if (room.password !== password) return socket.emit('error', 'Wrong password');
 
-        const checkedSet = new Set(participant.checked);
+            let formattedPhone = null;
 
-        if (checkedSet.has(cellIndex)) checkedSet.delete(cellIndex);
-        else checkedSet.add(cellIndex);
+            if (phoneSlots) {
+                formattedPhone = buildPhoneNumber(phoneSlots);
+                if (!formattedPhone) {
+                    return socket.emit('error', 'Invalid phone number');
+                }
+            } else if (phone) {
+                formattedPhone = normalizePhone(phone);
+                if (!formattedPhone) {
+                    return socket.emit('error', 'Invalid phone number');
+                }
+            }
 
-        participant.checked = [...checkedSet];
+            const participantId = socket.id;
 
-        const promptText = participant.card[cellIndex];
-        const hadBingo = participant.hasBingo;
-        participant.hasBingo = checkBingo(checkedSet, room.gridSize);
+            const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
+            const totalCells = room.gridSize * room.gridSize;
+            const centerIdx = Math.floor(totalCells / 2);
 
-        socket.emit('cell:updated', {
-            checked: participant.checked,
-            hasBingo: participant.hasBingo
-        });
+            const card = [...shuffled];
+            if (room.gridSize % 2 === 1) {
+                card[centerIdx] = 'FREE';
+            }
 
-        // Activity SMS
-        if (checkedSet.has(cellIndex) && promptText !== 'FREE') {
-            const message = `🎯 ${participant.name} has ${promptText}!`;
+            const checked = new Set(room.gridSize % 2 === 1 ? [centerIdx] : []);
 
-            io.to(code).emit('activity', {
-                message,
-                participantName: participant.name,
-                prompt: promptText
+            room.participants[participantId] = {
+                id: participantId,
+                name: name || 'Player',
+                phone: formattedPhone,
+                card,
+                checked: [...checked],
+                hasBingo: false
+            };
+
+            socket.join(code);
+
+            socket.emit('participant:joined', {
+                participantId,
+                card,
+                checked: [...checked],
+                gridSize: room.gridSize,
+                roomCode: code
             });
 
-            sendToAll(room, message);
+            io.to(code).emit('room:update', {
+                participants: sanitizeParticipants(room.participants)
+            });
+        } catch (err) {
+            console.error('participant:join error:', err);
+            socket.emit('error', 'Failed to join room');
         }
+    });
 
-        // Bingo SMS
-        if (!hadBingo && participant.hasBingo) {
-            const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
+    socket.on('cell:check', ({ roomCode, cellIndex }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
 
-            io.to(code).emit('bingo', {
-                participantName: participant.name,
-                message: bingoMsg
+            const participant = room.participants[socket.id];
+            if (!participant) return;
+
+            if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= participant.card.length) {
+                return;
+            }
+
+            const checkedSet = new Set(participant.checked);
+
+            if (checkedSet.has(cellIndex)) checkedSet.delete(cellIndex);
+            else checkedSet.add(cellIndex);
+
+            participant.checked = [...checkedSet];
+
+            const promptText = participant.card[cellIndex];
+            const hadBingo = participant.hasBingo;
+            participant.hasBingo = checkBingo(checkedSet, room.gridSize);
+
+            socket.emit('cell:updated', {
+                checked: participant.checked,
+                hasBingo: participant.hasBingo
             });
 
-            sendToAll(room, bingoMsg);
-        }
+            if (checkedSet.has(cellIndex) && promptText !== 'FREE') {
+                const message = `🎯 ${participant.name} has ${promptText}!`;
 
-        io.to(code).emit('room:update', {
-            participants: sanitizeParticipants(room.participants)
-        });
+                io.to(code).emit('activity', {
+                    message,
+                    participantName: participant.name,
+                    prompt: promptText
+                });
+
+                sendToAll(room, message);
+            }
+
+            if (!hadBingo && participant.hasBingo) {
+                const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
+
+                io.to(code).emit('bingo', {
+                    participantName: participant.name,
+                    message: bingoMsg
+                });
+
+                sendToAll(room, bingoMsg);
+            }
+
+            io.to(code).emit('room:update', {
+                participants: sanitizeParticipants(room.participants)
+            });
+        } catch (err) {
+            console.error('cell:check error:', err);
+        }
     });
 
     socket.on('disconnect', () => {
-        for (const [code, room] of Object.entries(rooms)) {
-            if (room.participants[socket.id]) {
-                const name = room.participants[socket.id].name;
-                delete room.participants[socket.id];
+        try {
+            for (const [code, room] of Object.entries(rooms)) {
+                if (room.participants[socket.id]) {
+                    const name = room.participants[socket.id].name;
+                    delete room.participants[socket.id];
 
-                io.to(code).emit('room:update', {
-                    participants: sanitizeParticipants(room.participants)
-                });
+                    io.to(code).emit('room:update', {
+                        participants: sanitizeParticipants(room.participants)
+                    });
 
-                io.to(code).emit('activity', {
-                    message: `${name} left the game`,
-                    participantName: name
-                });
+                    io.to(code).emit('activity', {
+                        message: `${name} left the game`,
+                        participantName: name
+                    });
+                }
             }
+        } catch (err) {
+            console.error('disconnect error:', err);
         }
     });
 });
-
-// =======================
-// CLEAN OUTPUT
-// =======================
-
-function sanitizeParticipants(participants) {
-    return Object.values(participants).map(p => ({
-        id: p.id,
-        name: p.name,
-        checked: p.checked,
-        card: p.card,
-        hasBingo: p.hasBingo
-    }));
-}
 
 // =======================
 // START SERVER
