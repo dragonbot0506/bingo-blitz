@@ -13,18 +13,14 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Global Twilio config from environment variables
-const globalTwilioConfig = process.env.TWILIO_ACCOUNT_SID ? {
-    accountSid: process.env.TWILIO_ACCOUNT_SID,
-    authToken: process.env.TWILIO_AUTH_TOKEN,
-    fromNumber: process.env.TWILIO_FROM_NUMBER
-} : null;
+// Global Twilio config (hardcoded)
+const globalTwilioConfig = {
+    accountSid: 'AC6b6f24faa2be6118f13f2034a9be9b54',
+    authToken: '94657acedb889418acb80f550c2ec7cf',
+    fromNumber: '(350) 900-3322'
+};
 
-if (globalTwilioConfig) {
-    console.log('Twilio SMS enabled globally from environment variables');
-} else {
-    console.log('No Twilio env vars found - SMS will only work if provided per-room');
-}
+console.log('Twilio SMS enabled globally from hardcoded config');
 
 // In-memory store
 const rooms = {}; // roomCode -> roomData
@@ -81,8 +77,7 @@ app.post('/api/rooms', (req, res) => {
     }
 
            const roomCode = generateRoomCode();
-    // Use global env var config, fall back to client-provided config
-           const effectiveTwilioConfig = globalTwilioConfig || twilioConfig || null;
+    const effectiveTwilioConfig = globalTwilioConfig || twilioConfig || null;
 
            rooms[roomCode] = {
                  password,
@@ -111,7 +106,6 @@ app.get('/api/sms-status', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-        // Arbiter joins their room
         socket.on('arbiter:join', ({ roomCode, arbiterId }) => {
               const room = rooms[roomCode];
               if (!room) return socket.emit('error', 'Room not found');
@@ -124,7 +118,6 @@ io.on('connection', (socket) => {
               });
         });
 
-        // Participant joins room
         socket.on('participant:join', ({ roomCode, password, name, phone }) => {
               const room = rooms[roomCode?.toUpperCase()];
               if (!room) return socket.emit('error', 'Room not found');
@@ -133,7 +126,6 @@ io.on('connection', (socket) => {
                       const code = roomCode.toUpperCase();
               const participantId = socket.id;
 
-                      // Assign a shuffled card
                       const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
               const totalCells = room.gridSize * room.gridSize;
               const centerIdx = Math.floor(totalCells / 2);
@@ -166,7 +158,6 @@ io.on('connection', (socket) => {
                       });
         });
 
-        // Participant checks off a cell
         socket.on('cell:check', async ({ roomCode, cellIndex }) => {
               const code = roomCode?.toUpperCase();
               const room = rooms[code];
@@ -198,7 +189,6 @@ io.on('connection', (socket) => {
                                         const message = `🎯 ${participant.name} has ${promptText}!`;
                                         io.to(code).emit('activity', { message, participantName: participant.name, prompt: promptText });
 
-                                // Send SMS to all participants with phones
                                 if (room.twilioConfig?.accountSid) {
                                             const allParticipants = Object.values(room.participants);
                                             const smsTargets = allParticipants.filter(p => p.phone && p.phone.trim());
@@ -216,7 +206,6 @@ io.on('connection', (socket) => {
                               }
                       }
 
-                      // Bingo announcement
                       if (!hadBingo && participant.hasBingo) {
                               const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
                               io.to(code).emit('bingo', { participantName: participant.name, message: bingoMsg });
