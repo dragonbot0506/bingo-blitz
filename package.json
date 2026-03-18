@@ -1,7 +1,7 @@
 {
-  "name": "bingo-challenge",
+  "name": "pingo",
   "version": "1.0.0",
-  "description": "Challenge Bingo with SMS notifications",
+  "description": "PIngo - Party Bingo with SMS notifications",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
