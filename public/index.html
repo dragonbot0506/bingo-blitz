@@ -710,6 +710,53 @@
       cursor: pointer;
       font-family: var(--font-body);
     }
+
+    /* ── OTP PHONE INPUT ── */
+    .phone-input-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .phone-prefix {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .phone-digits {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+    }
+
+    .phone-digit {
+      flex: 1;
+      min-width: 0;
+      height: 44px;
+      background: var(--surface2);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 16px;
+      text-align: center;
+      padding: 0;
+      outline: none;
+      -webkit-appearance: none;
+      transition: border-color 0.2s;
+      width: 100%;
+    }
+
+    .phone-digit:focus { border-color: var(--accent); }
+
+    .phone-digit-sep {
+      color: var(--muted);
+      font-size: 14px;
+      align-self: center;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -758,7 +805,10 @@
         </div>
       <div class="form-group">
             <label>Your Phone (for SMS notifications)</label>
-            <input id="setup-arbiter-phone" type="tel" placeholder="+1 555 000 0000" />
+            <div class="phone-input-row">
+              <span class="phone-prefix">+1</span>
+              <div class="phone-digits" id="setup-phone-digits"></div>
+            </div>
           </div>
         </div>
 
@@ -800,7 +850,10 @@
     </div>
     <div class="form-group">
       <label>Phone for SMS (optional)</label>
-      <input id="join-phone" type="tel" placeholder="+1 555 000 0000" />
+      <div class="phone-input-row">
+        <span class="phone-prefix">+1</span>
+        <div class="phone-digits" id="join-phone-digits"></div>
+      </div>
     </div>
     <button class="btn btn-primary" onclick="joinRoom()">JOIN GAME →</button>
     <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
@@ -1035,7 +1088,7 @@ async function createRoom() {
   const name = document.getElementById('setup-arbiter-name').value.trim();
   const password = document.getElementById('setup-password').value.trim();
   const sz = parseInt(document.getElementById('setup-grid-size').value);
-  const phone = document.getElementById('setup-arbiter-phone').value.trim();
+  const phone = getPhoneFromDigits(setupPhoneInputs);
 
   if (!name) return showToast('Enter your name!');
   if (!password) return showToast('Set a room password!');
@@ -1106,7 +1159,7 @@ async function joinRoom() {
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   const password = document.getElementById('join-password').value.trim();
   const name = document.getElementById('join-name').value.trim();
-  const phone = document.getElementById('join-phone').value.trim();
+  const phone = getPhoneFromDigits(joinPhoneInputs);
 
   if (!code) return showToast('Enter a room code!');
   if (!password) return showToast('Enter the password!');
@@ -1276,8 +1329,71 @@ function shuffleArray(arr) {
   return a;
 }
 
+// ── OTP PHONE INPUT ──
+let setupPhoneInputs = [];
+let joinPhoneInputs = [];
+
+function createPhoneInput(containerId) {
+  const container = document.getElementById(containerId);
+  const inputs = [];
+  const groups = [3, 3, 4];
+
+  groups.forEach((len, gi) => {
+    for (let i = 0; i < len; i++) {
+      const globalIdx = inputs.length;
+      const input = document.createElement('input');
+      input.className = 'phone-digit';
+      input.maxLength = 1;
+      input.inputMode = 'numeric';
+      input.pattern = '[0-9]*';
+
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(/\D/g, '');
+        if (input.value && inputs[globalIdx + 1]) inputs[globalIdx + 1].focus();
+      });
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !input.value && inputs[globalIdx - 1]) {
+          inputs[globalIdx - 1].focus();
+        }
+      });
+
+      input.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const digits = (e.clipboardData.getData('text') || '').replace(/\D/g, '');
+        [...digits].forEach((ch, offset) => {
+          if (inputs[globalIdx + offset]) inputs[globalIdx + offset].value = ch;
+        });
+        const next = inputs[Math.min(globalIdx + digits.length, 9)];
+        if (next) next.focus();
+      });
+
+      inputs.push(input);
+      container.appendChild(input);
+    }
+
+    if (gi < groups.length - 1) {
+      const sep = document.createElement('span');
+      sep.className = 'phone-digit-sep';
+      sep.textContent = '–';
+      container.appendChild(sep);
+    }
+  });
+
+  return inputs;
+}
+
+function getPhoneFromDigits(inputs) {
+  const digits = inputs.map(i => i.value).join('');
+  if (digits.length !== 10) return null;
+  return `+1${digits}`;
+}
+
 // ── AUTO-JOIN FROM URL ──
 window.addEventListener('load', () => {
+  setupPhoneInputs = createPhoneInput('setup-phone-digits');
+  joinPhoneInputs = createPhoneInput('join-phone-digits');
+
   const params = new URLSearchParams(location.search);
   const joinCode = params.get('join');
   if (joinCode) {
