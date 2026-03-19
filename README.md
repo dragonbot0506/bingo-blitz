@@ -1,1 +1,1 @@
-# bingo-blitz
+# PIngo
