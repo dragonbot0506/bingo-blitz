@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="/manifest.json" />
   <title>BINGO BLITZ</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -711,52 +712,6 @@
       font-family: var(--font-body);
     }
 
-    /* ── OTP PHONE INPUT ── */
-    .phone-input-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .phone-prefix {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--muted);
-      white-space: nowrap;
-    }
-
-    .phone-digits {
-      display: flex;
-      gap: 4px;
-      flex: 1;
-    }
-
-    .phone-digit {
-      flex: 1;
-      min-width: 0;
-      height: 44px;
-      background: var(--surface2);
-      border: 1.5px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-family: var(--font-body);
-      font-size: 16px;
-      text-align: center;
-      padding: 0;
-      outline: none;
-      -webkit-appearance: none;
-      transition: border-color 0.2s;
-      width: 100%;
-    }
-
-    .phone-digit:focus { border-color: var(--accent); }
-
-    .phone-digit-sep {
-      color: var(--muted);
-      font-size: 14px;
-      align-self: center;
-      flex-shrink: 0;
-    }
   </style>
 </head>
 <body>
@@ -803,14 +758,7 @@
             <option value="6">6×6 (36 prompts) — Marathon</option>
           </select>
         </div>
-      <div class="form-group">
-            <label>Your Phone (for SMS notifications)</label>
-            <div class="phone-input-row">
-              <span class="phone-prefix">+1</span>
-              <div class="phone-digits" id="setup-phone-digits"></div>
-            </div>
-          </div>
-        </div>
+      </div>
 
       <!-- Step 2: Prompts -->
       <div class="setup-step">
@@ -848,13 +796,6 @@
       <label>Your Name</label>
       <input id="join-name" type="text" placeholder="e.g. Jordan" autocomplete="off" />
     </div>
-    <div class="form-group">
-      <label>Phone for SMS (optional)</label>
-      <div class="phone-input-row">
-        <span class="phone-prefix">+1</span>
-        <div class="phone-digits" id="join-phone-digits"></div>
-      </div>
-    </div>
     <button class="btn btn-primary" onclick="joinRoom()">JOIN GAME →</button>
     <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
   </div>
@@ -875,6 +816,10 @@
     <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
+  </div>
+
+  <div id="push-banner-p" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
+    <button class="btn btn-primary btn-sm" onclick="enableNotifications()">ENABLE NOTIFICATIONS</button>
   </div>
 
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
@@ -920,6 +865,10 @@
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
+  </div>
+
+  <div id="push-banner-a" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
+    <button class="btn btn-primary btn-sm" onclick="enableNotifications()">ENABLE NOTIFICATIONS</button>
   </div>
 
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
@@ -1088,7 +1037,6 @@ async function createRoom() {
   const name = document.getElementById('setup-arbiter-name').value.trim();
   const password = document.getElementById('setup-password').value.trim();
   const sz = parseInt(document.getElementById('setup-grid-size').value);
-  const phone = getPhoneFromDigits(setupPhoneInputs);
 
   if (!name) return showToast('Enter your name!');
   if (!password) return showToast('Set a room password!');
@@ -1096,7 +1044,7 @@ async function createRoom() {
 
   const body = {
     password, gridSize: sz, prompts,
-    arbiterId, arbiterName: name, arbiterPhone: phone
+    arbiterId, arbiterName: name
   };
 
   try {
@@ -1151,6 +1099,10 @@ function setupArbiterDashboard(name, roomData) {
 
   updateParticipantDisplays(Object.values(roomData.participants || {}));
 
+  if ('PushManager' in window) {
+    document.getElementById('push-banner-a').style.display = 'block';
+  }
+
   showScreen('screen-arbiter');
 }
 
@@ -1159,14 +1111,13 @@ async function joinRoom() {
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   const password = document.getElementById('join-password').value.trim();
   const name = document.getElementById('join-name').value.trim();
-  const phone = getPhoneFromDigits(joinPhoneInputs);
 
   if (!code) return showToast('Enter a room code!');
   if (!password) return showToast('Enter the password!');
   if (!name) return showToast('Enter your name!');
 
   initSocket();
-  socket.emit('participant:join', { roomCode: code, password, name, phone });
+  socket.emit('participant:join', { roomCode: code, password, name });
 
   socket.off('participant:joined');
   socket.on('participant:joined', (data) => {
@@ -1181,6 +1132,10 @@ async function joinRoom() {
 
     renderBingoHeader('p-bingo-header', gridSize);
     renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+
+    if ('PushManager' in window) {
+      document.getElementById('push-banner-p').style.display = 'block';
+    }
 
     socket.on('cell:updated', (upd) => {
       myChecked = new Set(upd.checked);
@@ -1329,71 +1284,104 @@ function shuffleArray(arr) {
   return a;
 }
 
-// ── OTP PHONE INPUT ──
-let setupPhoneInputs = [];
-let joinPhoneInputs = [];
+// ── PUSH NOTIFICATIONS ──
+let pushSubscription = null;
+let vapidPublicKey = null;
 
-function createPhoneInput(containerId) {
-  const container = document.getElementById(containerId);
-  const inputs = [];
-  const groups = [3, 3, 4];
-
-  groups.forEach((len, gi) => {
-    for (let i = 0; i < len; i++) {
-      const globalIdx = inputs.length;
-      const input = document.createElement('input');
-      input.className = 'phone-digit';
-      input.maxLength = 1;
-      input.inputMode = 'numeric';
-      input.pattern = '[0-9]*';
-
-      input.addEventListener('input', () => {
-        input.value = input.value.replace(/\D/g, '');
-        if (input.value && inputs[globalIdx + 1]) inputs[globalIdx + 1].focus();
-      });
-
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Backspace' && !input.value && inputs[globalIdx - 1]) {
-          inputs[globalIdx - 1].focus();
-        }
-      });
-
-      input.addEventListener('paste', (e) => {
-        e.preventDefault();
-        const digits = (e.clipboardData.getData('text') || '').replace(/\D/g, '');
-        [...digits].forEach((ch, offset) => {
-          if (inputs[globalIdx + offset]) inputs[globalIdx + offset].value = ch;
-        });
-        const next = inputs[Math.min(globalIdx + digits.length, 9)];
-        if (next) next.focus();
-      });
-
-      inputs.push(input);
-      container.appendChild(input);
-    }
-
-    if (gi < groups.length - 1) {
-      const sep = document.createElement('span');
-      sep.className = 'phone-digit-sep';
-      sep.textContent = '–';
-      container.appendChild(sep);
-    }
-  });
-
-  return inputs;
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    await navigator.serviceWorker.register('/sw.js');
+    console.log('SW registered');
+  } catch (err) {
+    console.error('SW registration failed:', err);
+  }
 }
 
-function getPhoneFromDigits(inputs) {
-  const digits = inputs.map(i => i.value).join('');
-  if (digits.length !== 10) return null;
-  return `+1${digits}`;
+async function subscribeToPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('Push notifications not supported on this browser');
+    return null;
+  }
+
+  try {
+    if (!vapidPublicKey) {
+      const resp = await fetch('/api/vapid-public-key');
+      const data = await resp.json();
+      vapidPublicKey = data.publicKey;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    });
+
+    pushSubscription = sub;
+    return sub;
+  } catch (err) {
+    console.error('Push subscribe failed:', err);
+    showToast('Could not enable notifications. Check permissions.');
+    return null;
+  }
+}
+
+async function enableNotifications() {
+  const isArbiter = document.getElementById('screen-arbiter').classList.contains('active');
+  const sub = await subscribeToPush();
+  if (!sub) return;
+
+  await fetch('/api/push-subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      roomCode: currentRoom,
+      participantId: isArbiter ? arbiterId : myParticipantId,
+      subscription: sub.toJSON(),
+      isArbiter
+    })
+  });
+
+  document.getElementById('push-banner-p').style.display = 'none';
+  document.getElementById('push-banner-a').style.display = 'none';
+  showToast('Notifications enabled!');
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+// ── iOS ADD TO HOME SCREEN GUIDE ──
+function detectiOSInstallPrompt() {
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isStandalone = window.navigator.standalone === true;
+
+  if (isIOS && !isStandalone) {
+    const banner = document.createElement('div');
+    banner.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px;margin:24px 24px 0;text-align:center;">
+        <div style="font-family:var(--font-display);font-size:16px;color:var(--accent);margin-bottom:8px;">
+          ADD TO HOME SCREEN
+        </div>
+        <div style="font-size:13px;color:var(--muted);line-height:1.5;">
+          For the best experience with notifications:<br/>
+          Tap <strong style="color:var(--accent3);">Share</strong>
+          then <strong style="color:var(--accent3);">Add to Home Screen</strong>
+        </div>
+        <button class="btn btn-ghost" onclick="this.parentElement.parentElement.remove()" style="margin-top:8px;">
+          Dismiss
+        </button>
+      </div>
+    `;
+    document.getElementById('screen-landing').appendChild(banner);
+  }
 }
 
 // ── AUTO-JOIN FROM URL ──
 window.addEventListener('load', () => {
-  setupPhoneInputs = createPhoneInput('setup-phone-digits');
-  joinPhoneInputs = createPhoneInput('join-phone-digits');
-
   const params = new URLSearchParams(location.search);
   const joinCode = params.get('join');
   if (joinCode) {
@@ -1401,6 +1389,8 @@ window.addEventListener('load', () => {
     showScreen('screen-join');
   }
   updateNeededCount();
+  registerServiceWorker();
+  detectiOSInstallPrompt();
 });
 </script>
 </body>

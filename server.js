@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const twilio = require('twilio');
+const webpush = require('web-push');
 const path = require('path');
 
 const app = express();
@@ -13,45 +13,32 @@ const io = new Server(server, {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Twilio config
-const globalTwilioConfig = {
-    accountSid: 'AC6b6f24faa2be6118f13f2034a9be9b54',
-    authToken: '94657acedb889418acb80f550c2ec7cf',
-    fromNumber: '+13509003322'
-};
+// Web Push VAPID setup
+let vapidPublicKey;
 
-console.log('Twilio SMS enabled globally');
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+    webpush.setVapidDetails(
+        'mailto:admin@pingo.app',
+        process.env.VAPID_PUBLIC_KEY,
+        process.env.VAPID_PRIVATE_KEY
+    );
+    console.log('Web Push enabled with VAPID keys from env');
+} else {
+    const vapidKeys = webpush.generateVAPIDKeys();
+    vapidPublicKey = vapidKeys.publicKey;
+    webpush.setVapidDetails(
+        'mailto:admin@pingo.app',
+        vapidKeys.publicKey,
+        vapidKeys.privateKey
+    );
+    console.log('Web Push enabled with auto-generated VAPID keys');
+    console.log('VAPID_PUBLIC_KEY=' + vapidKeys.publicKey);
+    console.log('VAPID_PRIVATE_KEY=' + vapidKeys.privateKey);
+}
 
 // In-memory store
 const rooms = {};
-
-// =======================
-// PHONE HELPERS
-// =======================
-
-function buildPhoneNumber(phoneSlots) {
-    if (!phoneSlots || typeof phoneSlots !== 'object') return null;
-
-    const area = String(phoneSlots.area || '').replace(/\D/g, '');
-    const prefix = String(phoneSlots.prefix || '').replace(/\D/g, '');
-    const line = String(phoneSlots.line || '').replace(/\D/g, '');
-
-    if (!area && !prefix && !line) return null;
-    if (area.length !== 3 || prefix.length !== 3 || line.length !== 4) return null;
-
-    return `+1${area}${prefix}${line}`;
-}
-
-function normalizePhone(input) {
-    if (!input) return null;
-
-    const digits = String(input).replace(/\D/g, '');
-
-    if (digits.length === 10) return `+1${digits}`;
-    if (digits.length === 11 && digits.startsWith('1')) return `+1${digits.slice(1)}`;
-
-    return null;
-}
 
 // =======================
 // UTIL FUNCTIONS
@@ -104,47 +91,26 @@ function sanitizeParticipants(participants) {
 }
 
 // =======================
-// SMS
+// PUSH NOTIFICATIONS
 // =======================
 
-async function sendSMS(twilioConfig, to, message) {
-    try {
-        if (!twilioConfig?.accountSid || !twilioConfig?.authToken || !twilioConfig?.fromNumber) {
-            console.log('SMS skipped: missing Twilio config');
-            return;
-        }
-
-        const client = twilio(twilioConfig.accountSid, twilioConfig.authToken);
-
-        console.log('Sending SMS →', to, '|', message);
-
-        const result = await client.messages.create({
-            body: message,
-            from: twilioConfig.fromNumber,
-            to
-        });
-
-        console.log('SMS sent:', result.sid);
-    } catch (err) {
-        console.error('Twilio ERROR:', err?.message || err);
-    }
-}
-
-function sendToAll(room, message) {
-    if (!room?.twilioConfig?.accountSid) return;
-
-    const targets = Object.values(room.participants)
-        .map((p) => p.phone)
+async function sendPushToAll(room, title, body) {
+    const subscriptions = Object.values(room.participants)
+        .map(p => p.pushSubscription)
         .filter(Boolean);
 
-    if (room.arbiter?.phone) {
-        targets.push(room.arbiter.phone);
+    if (room.arbiter?.pushSubscription) {
+        subscriptions.push(room.arbiter.pushSubscription);
     }
 
-    const unique = [...new Set(targets)];
+    const payload = JSON.stringify({ title, body });
 
-    for (const phone of unique) {
-        sendSMS(room.twilioConfig, phone, message);
+    for (const sub of subscriptions) {
+        try {
+            await webpush.sendNotification(sub, payload);
+        } catch (err) {
+            console.error('Push send failed:', err.statusCode || err.message);
+        }
     }
 }
 
@@ -161,9 +127,7 @@ app.post('/api/rooms', (req, res) => {
             gridSize,
             prompts,
             arbiterId,
-            arbiterName,
-            arbiterPhoneSlots,
-            arbiterPhone
+            arbiterName
         } = req.body;
 
         const parsedGridSize = Number(gridSize);
@@ -182,20 +146,6 @@ app.post('/api/rooms', (req, res) => {
             });
         }
 
-        let formattedArbiterPhone = null;
-
-        if (arbiterPhoneSlots) {
-            formattedArbiterPhone = buildPhoneNumber(arbiterPhoneSlots);
-            if (!formattedArbiterPhone) {
-                return res.status(400).json({ error: 'Invalid arbiter phone number' });
-            }
-        } else if (arbiterPhone) {
-            formattedArbiterPhone = normalizePhone(arbiterPhone);
-            if (!formattedArbiterPhone) {
-                return res.status(400).json({ error: 'Invalid arbiter phone number' });
-            }
-        }
-
         const roomCode = generateRoomCode();
 
         rooms[roomCode] = {
@@ -203,11 +153,10 @@ app.post('/api/rooms', (req, res) => {
             gridSize: parsedGridSize,
             prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
             participants: {},
-            twilioConfig: globalTwilioConfig,
             arbiter: {
                 id: arbiterId || 'host',
                 name: arbiterName || 'Host',
-                phone: formattedArbiterPhone
+                pushSubscription: null
             },
             createdAt: Date.now()
         };
@@ -231,8 +180,22 @@ app.get('/api/rooms/:code', (req, res) => {
     });
 });
 
-app.get('/api/sms-status', (req, res) => {
-    res.json({ enabled: true });
+app.get('/api/vapid-public-key', (req, res) => {
+    res.json({ publicKey: vapidPublicKey });
+});
+
+app.post('/api/push-subscribe', (req, res) => {
+    const { roomCode, participantId, subscription, isArbiter } = req.body;
+    const room = rooms[String(roomCode || '').toUpperCase()];
+    if (!room) return res.status(404).json({ error: 'Room not found' });
+
+    if (isArbiter && room.arbiter) {
+        room.arbiter.pushSubscription = subscription;
+    } else if (room.participants[participantId]) {
+        room.participants[participantId].pushSubscription = subscription;
+    }
+
+    res.json({ success: true });
 });
 
 // =======================
@@ -261,27 +224,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('participant:join', ({ roomCode, password, name, phoneSlots, phone }) => {
+    socket.on('participant:join', ({ roomCode, password, name }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
             const room = rooms[code];
 
             if (!room) return socket.emit('error', 'Room not found');
             if (room.password !== password) return socket.emit('error', 'Wrong password');
-
-            let formattedPhone = null;
-
-            if (phoneSlots) {
-                formattedPhone = buildPhoneNumber(phoneSlots);
-                if (!formattedPhone) {
-                    return socket.emit('error', 'Invalid phone number');
-                }
-            } else if (phone) {
-                formattedPhone = normalizePhone(phone);
-                if (!formattedPhone) {
-                    return socket.emit('error', 'Invalid phone number');
-                }
-            }
 
             const participantId = socket.id;
 
@@ -299,7 +248,7 @@ io.on('connection', (socket) => {
             room.participants[participantId] = {
                 id: participantId,
                 name: name || 'Player',
-                phone: formattedPhone,
+                pushSubscription: null,
                 card,
                 checked: [...checked],
                 hasBingo: false
@@ -354,7 +303,7 @@ io.on('connection', (socket) => {
             });
 
             if (checkedSet.has(cellIndex) && promptText !== 'FREE') {
-                const message = `🎯 ${participant.name} has ${promptText}!`;
+                const message = `${participant.name} Completed: ${promptText}`;
 
                 io.to(code).emit('activity', {
                     message,
@@ -362,18 +311,18 @@ io.on('connection', (socket) => {
                     prompt: promptText
                 });
 
-                sendToAll(room, message);
+                sendPushToAll(room, 'Task Completed!', message);
             }
 
             if (!hadBingo && participant.hasBingo) {
-                const bingoMsg = `🎉 BINGO! ${participant.name} got BINGO!`;
+                const bingoMsg = `${participant.name} got BINGO!`;
 
                 io.to(code).emit('bingo', {
                     participantName: participant.name,
                     message: bingoMsg
                 });
 
-                sendToAll(room, bingoMsg);
+                sendPushToAll(room, 'BINGO!', bingoMsg);
             }
 
             io.to(code).emit('room:update', {
