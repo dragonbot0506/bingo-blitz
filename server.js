@@ -173,13 +173,15 @@ function checkBingo(checked, gridSize) {
 }
 
 function sanitizeParticipants(participants) {
-    return Object.values(participants).map((p) => ({
-        id: p.id,
-        name: p.name,
-        checked: p.checked,
-        card: p.card,
-        hasBingo: p.hasBingo
-    }));
+    return Object.values(participants)
+        .filter(p => !p.kicked)
+        .map((p) => ({
+            id: p.id,
+            name: p.name,
+            checked: p.checked,
+            card: p.card,
+            hasBingo: p.hasBingo
+        }));
 }
 
 function getAllPlayers(room) {
@@ -311,7 +313,7 @@ app.get('/api/rooms', (req, res) => {
     const list = Object.entries(rooms).map(([code, room]) => ({
         roomCode: code,
         partyName: room.partyName || 'Unnamed Party',
-        participantCount: Object.keys(room.participants).length + (room.arbiter ? 1 : 0),
+        participantCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
         gridSize: room.gridSize,
         hostName: room.arbiter?.name || 'Unknown'
     }));
@@ -356,16 +358,16 @@ app.get('/api/my-rooms', requireAuth, (req, res) => {
                 roomCode: code,
                 partyName: room.partyName || 'Unnamed Party',
                 role: 'host',
-                playerCount: Object.keys(room.participants).length + 1,
+                playerCount: Object.values(room.participants).filter(p => !p.kicked).length + 1,
                 gridSize: room.gridSize,
                 hostName: room.arbiter.name
             });
-        } else if (room.participants[username]) {
+        } else if (room.participants[username] && !room.participants[username].kicked) {
             myRooms.push({
                 roomCode: code,
                 partyName: room.partyName || 'Unnamed Party',
                 role: 'player',
-                playerCount: Object.keys(room.participants).length + (room.arbiter ? 1 : 0),
+                playerCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
                 gridSize: room.gridSize,
                 hostName: room.arbiter?.name || 'Unknown'
             });
@@ -513,6 +515,10 @@ io.on('connection', (socket) => {
             if (room.participants[participantKey]) {
                 const existing = room.participants[participantKey];
                 existing.socketId = socket.id;
+                // Restore kicked players with their full state
+                if (existing.kicked) {
+                    existing.kicked = false;
+                }
                 socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
                 if (username && users[username]) {
@@ -604,7 +610,7 @@ io.on('connection', (socket) => {
                 });
             } else {
                 const participant = room.participants[username];
-                if (!participant) return socket.emit('error', 'Not in this room');
+                if (!participant || participant.kicked) return socket.emit('error', 'Not in this room');
                 participant.socketId = socket.id;
                 socketToUser[socket.id] = { username, roomCode: code };
                 socket.join(code);
@@ -715,7 +721,9 @@ io.on('connection', (socket) => {
             const name = participant.name;
             const kickedSocketId = participant.socketId;
 
-            delete room.participants[participantId];
+            // Preserve participant data for potential rejoin — mark as kicked
+            participant.kicked = true;
+            participant.socketId = null;
             if (users[participantId]) {
                 users[participantId].activeRoom = null;
             }
