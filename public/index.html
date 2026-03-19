@@ -716,15 +716,63 @@
 </head>
 <body>
 
+<!-- ──────────────────────── AUTH ──────────────────────── -->
+<div id="screen-auth" class="screen active">
+  <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:0;position:relative;overflow:hidden;">
+    <div class="logo-block">
+      <div class="logo-top">BINGO</div>
+      <div class="logo-sub">BLITZ</div>
+    </div>
+
+    <!-- Auth Toggle Tabs -->
+    <div style="display:flex;width:100%;max-width:360px;margin-bottom:24px;border-radius:var(--radius);overflow:hidden;border:1.5px solid var(--border);">
+      <button id="auth-tab-login" class="btn" onclick="switchAuthTab('login')" style="flex:1;border-radius:0;border:none;background:var(--accent);color:#0a0a0f;font-size:18px;padding:14px;">LOG IN</button>
+      <button id="auth-tab-signup" class="btn" onclick="switchAuthTab('signup')" style="flex:1;border-radius:0;border:none;background:var(--surface2);color:var(--muted);font-size:18px;padding:14px;">SIGN UP</button>
+    </div>
+
+    <!-- Login Form -->
+    <div id="auth-form-login" style="width:100%;max-width:360px;display:flex;flex-direction:column;gap:16px;">
+      <div class="form-group">
+        <label>Username</label>
+        <input id="login-username" type="text" placeholder="Your username" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input id="login-password" type="password" placeholder="Your password" autocomplete="current-password" />
+      </div>
+      <button class="btn btn-primary" onclick="doLogin()">LOG IN</button>
+    </div>
+
+    <!-- Signup Form -->
+    <div id="auth-form-signup" style="width:100%;max-width:360px;display:none;flex-direction:column;gap:16px;">
+      <div class="form-group">
+        <label>Choose a Username</label>
+        <input id="signup-username" type="text" placeholder="At least 3 characters" autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input id="signup-password" type="password" placeholder="At least 4 characters" autocomplete="new-password" />
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input id="signup-confirm" type="password" placeholder="Re-enter password" autocomplete="new-password" />
+      </div>
+      <button class="btn btn-primary" onclick="doSignup()">CREATE ACCOUNT</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── LANDING ──────────────────────── -->
-<div id="screen-landing" class="screen active">
+<div id="screen-landing" class="screen">
   <div class="logo-block">
     <div class="logo-top">BINGO</div>
     <div class="logo-sub">BLITZ</div>
   </div>
+  <div id="welcome-user" style="font-size:14px;color:var(--muted);margin-bottom:24px;text-align:center;"></div>
   <div class="landing-btns">
     <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">⚡ CREATE GAME</button>
     <button class="btn btn-secondary" onclick="showScreen('screen-join')">🎯 JOIN GAME</button>
+    <button class="btn btn-ghost" onclick="doLogout()" style="margin-top:8px;">Log Out</button>
   </div>
 </div>
 
@@ -1380,17 +1428,123 @@ function detectiOSInstallPrompt() {
   }
 }
 
-// ── AUTO-JOIN FROM URL ──
-window.addEventListener('load', () => {
+// ── AUTH ──
+let loggedInUser = null;
+
+function switchAuthTab(tab) {
+  const loginTab = document.getElementById('auth-tab-login');
+  const signupTab = document.getElementById('auth-tab-signup');
+  const loginForm = document.getElementById('auth-form-login');
+  const signupForm = document.getElementById('auth-form-signup');
+
+  if (tab === 'login') {
+    loginTab.style.background = 'var(--accent)';
+    loginTab.style.color = '#0a0a0f';
+    signupTab.style.background = 'var(--surface2)';
+    signupTab.style.color = 'var(--muted)';
+    loginForm.style.display = 'flex';
+    signupForm.style.display = 'none';
+  } else {
+    signupTab.style.background = 'var(--accent)';
+    signupTab.style.color = '#0a0a0f';
+    loginTab.style.background = 'var(--surface2)';
+    loginTab.style.color = 'var(--muted)';
+    signupForm.style.display = 'flex';
+    loginForm.style.display = 'none';
+  }
+}
+
+async function doSignup() {
+  const username = document.getElementById('signup-username').value.trim();
+  const password = document.getElementById('signup-password').value;
+  const confirm = document.getElementById('signup-confirm').value;
+
+  if (!username || !password) return showToast('Fill in all fields');
+  if (password !== confirm) return showToast('Passwords do not match');
+
+  try {
+    const resp = await fetch('/api/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+    if (!resp.ok) return showToast(data.error);
+
+    loggedInUser = data.username;
+    enterApp();
+  } catch {
+    showToast('Server error');
+  }
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+
+  if (!username || !password) return showToast('Fill in all fields');
+
+  try {
+    const resp = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await resp.json();
+    if (!resp.ok) return showToast(data.error);
+
+    loggedInUser = data.username;
+    enterApp();
+  } catch {
+    showToast('Server error');
+  }
+}
+
+async function doLogout() {
+  await fetch('/api/logout', { method: 'POST' });
+  loggedInUser = null;
+  showScreen('screen-auth');
+}
+
+function enterApp() {
+  document.getElementById('welcome-user').textContent = 'Logged in as ' + loggedInUser;
+  // Pre-fill name fields with username
+  document.getElementById('setup-arbiter-name').value = loggedInUser;
+  document.getElementById('join-name').value = loggedInUser;
+
   const params = new URLSearchParams(location.search);
   const joinCode = params.get('join');
   if (joinCode) {
     document.getElementById('join-code').value = joinCode.toUpperCase();
     showScreen('screen-join');
+  } else {
+    showScreen('screen-landing');
   }
+}
+
+async function checkSession() {
+  try {
+    const resp = await fetch('/api/me');
+    if (resp.ok) {
+      const data = await resp.json();
+      loggedInUser = data.username;
+      enterApp();
+      return;
+    }
+  } catch {}
+  showScreen('screen-auth');
+}
+
+// Allow Enter key to submit auth forms
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+document.getElementById('signup-confirm').addEventListener('keydown', e => { if (e.key === 'Enter') doSignup(); });
+
+// ── AUTO-JOIN FROM URL ──
+window.addEventListener('load', () => {
   updateNeededCount();
   registerServiceWorker();
   detectiOSInstallPrompt();
+  checkSession();
 });
 </script>
 </body>

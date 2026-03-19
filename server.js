@@ -2,6 +2,9 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const webpush = require('web-push');
+const bcrypt = require('bcryptjs');
+const cookieParser = require('cookie-parser');
+const crypto = require('crypto');
 const path = require('path');
 
 const app = express();
@@ -11,7 +14,82 @@ const io = new Server(server, {
 });
 
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// =======================
+// AUTH - In-memory stores
+// =======================
+const users = {};      // { username: { username, passwordHash } }
+const sessions = {};   // { sessionToken: username }
+
+function requireAuth(req, res, next) {
+    const token = req.cookies?.session;
+    if (!token || !sessions[token]) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    req.username = sessions[token];
+    next();
+}
+
+app.post('/api/signup', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password required' });
+    }
+    const trimmed = username.trim().toLowerCase();
+    if (trimmed.length < 3) {
+        return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    }
+    if (password.length < 4) {
+        return res.status(400).json({ error: 'Password must be at least 4 characters' });
+    }
+    if (users[trimmed]) {
+        return res.status(409).json({ error: 'Username already taken' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    users[trimmed] = { username: trimmed, passwordHash };
+
+    const token = crypto.randomUUID();
+    sessions[token] = trimmed;
+    res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
+    res.json({ username: trimmed });
+});
+
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password required' });
+    }
+    const trimmed = username.trim().toLowerCase();
+    const user = users[trimmed];
+    if (!user) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) {
+        return res.status(401).json({ error: 'Invalid username or password' });
+    }
+    const token = crypto.randomUUID();
+    sessions[token] = trimmed;
+    res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
+    res.json({ username: trimmed });
+});
+
+app.post('/api/logout', (req, res) => {
+    const token = req.cookies?.session;
+    if (token) delete sessions[token];
+    res.clearCookie('session');
+    res.json({ success: true });
+});
+
+app.get('/api/me', (req, res) => {
+    const token = req.cookies?.session;
+    if (!token || !sessions[token]) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    res.json({ username: sessions[token] });
+});
 
 // Web Push VAPID setup
 let vapidPublicKey;
