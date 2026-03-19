@@ -1027,7 +1027,7 @@
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
-    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showLeaveConfirm()">LEAVE</button>
+    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showHostActions()">LEAVE</button>
   </div>
 
   <div id="push-banner-a" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
@@ -1037,7 +1037,7 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <!-- Players Tab -->
     <div id="a-tab-players" class="tab-panel active" style="padding:16px;">
-      <div class="section-header">PARTICIPANTS (<span id="a-player-count">0</span>)</div>
+      <div class="section-header">PLAYERS (<span id="a-player-count">0</span>)</div>
       <div id="a-participants" class="participant-grid">
         <div class="empty-state">Share the room code — waiting for players to join!</div>
       </div>
@@ -1123,6 +1123,44 @@
   </div>
 </div>
 
+<!-- ──────────────────────── HOST ACTIONS MODAL ──────────────────────── -->
+<div id="host-actions-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p style="font-family:var(--font-display);font-size:20px;color:var(--accent);">HOST OPTIONS</p>
+    <p style="font-size:14px;color:var(--muted);">As the host, you must transfer your role or delete the party.</p>
+    <button class="btn btn-secondary" onclick="showTransferModal()">TRANSFER HOST</button>
+    <button class="btn btn-danger" onclick="showDeletePartyModal()">DELETE PARTY</button>
+    <button class="btn btn-ghost" onclick="closeHostActions()">Cancel</button>
+  </div>
+</div>
+
+<!-- ──────────────────────── TRANSFER HOST MODAL ──────────────────────── -->
+<div id="transfer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:650;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p style="font-family:var(--font-display);font-size:20px;color:var(--accent);">TRANSFER HOST</p>
+    <p style="font-size:14px;color:var(--muted);">Select a player to become the new host. You will become a regular player.</p>
+    <div id="transfer-player-list" style="display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto;width:100%;"></div>
+    <button class="btn btn-ghost" onclick="closeTransferModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- ──────────────────────── DELETE PARTY MODAL ──────────────────────── -->
+<div id="delete-party-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:650;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p style="font-family:var(--font-display);font-size:20px;color:var(--accent2);">DELETE PARTY</p>
+    <p style="font-size:14px;color:var(--muted);">This will permanently delete the party and remove all players. This cannot be undone.</p>
+    <div class="form-group" style="text-align:left;">
+      <label>Enter your account password to confirm</label>
+      <input id="delete-party-password" type="password" placeholder="Your account password" autocomplete="off" />
+    </div>
+    <div id="delete-party-error" style="color:var(--accent2);font-size:13px;display:none;"></div>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="closeDeletePartyModal()">Cancel</button>
+      <button class="btn btn-danger" onclick="deleteParty()">DELETE FOREVER</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── TOAST ──────────────────────── -->
 <div id="toast"></div>
 
@@ -1140,6 +1178,8 @@ let prompts = [];
 let activityLog = [];
 let arbiterCard = [];
 let arbiterChecked = new Set();
+let isCurrentlyArbiter = false;
+let currentParticipants = [];
 
 // ── UTILS ──
 function showScreen(id) {
@@ -1177,6 +1217,42 @@ function initSocket() {
   socket.on('room:update', (data) => {
     updateParticipantDisplays(data.participants);
   });
+  socket.on('kicked', () => {
+    showToast('You have been kicked from the party');
+    resetAndGoHome();
+  });
+  socket.on('room:deleted', () => {
+    showToast('The party has been deleted by the host');
+    resetAndGoHome();
+  });
+  socket.on('role:changed', (data) => {
+    if (data.newRole === 'arbiter') {
+      setupSocketListeners(true);
+      currentRoom = data.data.roomCode;
+      gridSize = data.data.gridSize;
+      setupArbiterDashboard(loggedInUser, data.data);
+    } else {
+      setupSocketListeners(false);
+      handleParticipantJoined(data.data);
+    }
+    showToast('Your role has been updated');
+  });
+}
+
+function resetAndGoHome() {
+  currentRoom = null;
+  myParticipantId = null;
+  myCard = [];
+  myChecked = new Set();
+  arbiterCard = [];
+  arbiterChecked = new Set();
+  isCurrentlyArbiter = false;
+  currentParticipants = [];
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  showScreen('screen-landing');
 }
 
 // ── PROMPT MANAGEMENT ──
@@ -1262,6 +1338,7 @@ async function createRoom() {
 }
 
 function setupArbiterDashboard(name, roomData) {
+  isCurrentlyArbiter = true;
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
   document.getElementById('a-party-name').textContent = roomData.partyName || '';
@@ -1281,7 +1358,11 @@ function setupArbiterDashboard(name, roomData) {
     `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${p}</span></div>`
   ).join('');
 
-  updateParticipantDisplays(Object.values(roomData.participants || {}));
+  // participants is now an array from getAllPlayers (includes host)
+  const players = Array.isArray(roomData.participants)
+    ? roomData.participants
+    : Object.values(roomData.participants || {});
+  updateParticipantDisplays(players);
 
   showPushBannerIfNeeded();
 
@@ -1370,14 +1451,15 @@ function cancelCellConfirm() {
 
 // ── PARTICIPANTS ──
 function updateParticipantDisplays(participants) {
+  currentParticipants = participants;
   const total = gridSize * gridSize;
-  renderParticipants('p-participants', participants, total);
-  renderParticipants('a-participants', participants, total);
+  renderParticipants('p-participants', participants, total, false);
+  renderParticipants('a-participants', participants, total, true);
   document.getElementById('a-player-count').textContent = participants.length;
   document.getElementById('info-player-count').textContent = participants.length;
 }
 
-function renderParticipants(containerId, participants, total) {
+function renderParticipants(containerId, participants, total, isArbiterView) {
   const el = document.getElementById(containerId);
   if (!participants || participants.length === 0) {
     el.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No players yet...</div>';
@@ -1385,15 +1467,21 @@ function renderParticipants(containerId, participants, total) {
   }
   el.innerHTML = participants.map(p => {
     const pct = Math.round((p.checked.length / total) * 100);
+    const isMe = p.id === loggedInUser;
+    const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
+    const kickBtn = isArbiterView && !p.isHost && !isMe
+      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="kickPlayer('${p.id}')">KICK</button>`
+      : '';
     return `
       <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}">
-        <div class="participant-name">${p.id === loggedInUser ? '⭐ ' : ''}${p.name}</div>
+        <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${p.name}</div>
         ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
           <div class="participant-stat">${p.checked.length}/${total} checked</div>
         `}
+        ${kickBtn}
       </div>
     `;
   }).join('');
@@ -1760,7 +1848,35 @@ function enterApp(activeRoom) {
   }
 }
 
+function handleParticipantJoined(data) {
+  isCurrentlyArbiter = false;
+  currentRoom = data.roomCode;
+  myParticipantId = data.participantId;
+  myCard = data.card;
+  myChecked = new Set(data.checked);
+  gridSize = data.gridSize;
+
+  document.getElementById('p-player-name').textContent = loggedInUser;
+  document.getElementById('p-room-code').textContent = data.roomCode;
+  document.getElementById('p-party-name').textContent = data.partyName || '';
+
+  renderBingoHeader('p-bingo-header', gridSize);
+  renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+
+  showPushBannerIfNeeded();
+
+  socket.off('cell:updated');
+  socket.on('cell:updated', (upd) => {
+    myChecked = new Set(upd.checked);
+    renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+    if (upd.hasBingo) showToast('🎉 PIngo! You did it!');
+  });
+
+  showScreen('screen-participant');
+}
+
 function setupSocketListeners(isArbiter) {
+  isCurrentlyArbiter = isArbiter;
   if (isArbiter) {
     socket.off('arbiter:joined');
     socket.on('arbiter:joined', (roomData) => {
@@ -1776,31 +1892,7 @@ function setupSocketListeners(isArbiter) {
     });
   } else {
     socket.off('participant:joined');
-    socket.on('participant:joined', (data) => {
-      currentRoom = data.roomCode;
-      myParticipantId = data.participantId;
-      myCard = data.card;
-      myChecked = new Set(data.checked);
-      gridSize = data.gridSize;
-
-      document.getElementById('p-player-name').textContent = loggedInUser;
-      document.getElementById('p-room-code').textContent = data.roomCode;
-      document.getElementById('p-party-name').textContent = data.partyName || '';
-
-      renderBingoHeader('p-bingo-header', gridSize);
-      renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
-
-      showPushBannerIfNeeded();
-
-      socket.off('cell:updated');
-      socket.on('cell:updated', (upd) => {
-        myChecked = new Set(upd.checked);
-        renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
-        if (upd.hasBingo) showToast('🎉 PIngo! You did it!');
-      });
-
-      showScreen('screen-participant');
-    });
+    socket.on('participant:joined', handleParticipantJoined);
   }
 }
 
@@ -1819,17 +1911,81 @@ async function leaveRoom() {
   try {
     await fetch('/api/leave-room', { method: 'POST' });
   } catch {}
-  currentRoom = null;
-  myParticipantId = null;
-  myCard = [];
-  myChecked = new Set();
-  arbiterCard = [];
-  arbiterChecked = new Set();
-  if (socket) {
-    socket.disconnect();
-    socket = null;
+  resetAndGoHome();
+}
+
+// ── HOST ACTIONS ──
+function showHostActions() {
+  document.getElementById('host-actions-modal').style.display = 'flex';
+}
+function closeHostActions() {
+  document.getElementById('host-actions-modal').style.display = 'none';
+}
+
+function showTransferModal() {
+  closeHostActions();
+  const nonHostPlayers = currentParticipants.filter(p => !p.isHost);
+  const list = document.getElementById('transfer-player-list');
+  if (nonHostPlayers.length === 0) {
+    list.innerHTML = '<div class="empty-state">No other players to transfer to.</div>';
+  } else {
+    list.innerHTML = nonHostPlayers.map(p => `
+      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer('${p.id}', '${p.name}')">
+        ${p.name}
+      </button>
+    `).join('');
   }
-  showScreen('screen-landing');
+  document.getElementById('transfer-modal').style.display = 'flex';
+}
+function closeTransferModal() {
+  document.getElementById('transfer-modal').style.display = 'none';
+}
+function confirmTransfer(playerId, playerName) {
+  closeTransferModal();
+  if (!socket || !currentRoom) return;
+  socket.emit('host:transfer', { roomCode: currentRoom, newHostId: playerId });
+}
+
+function showDeletePartyModal() {
+  closeHostActions();
+  document.getElementById('delete-party-password').value = '';
+  document.getElementById('delete-party-error').style.display = 'none';
+  document.getElementById('delete-party-modal').style.display = 'flex';
+}
+function closeDeletePartyModal() {
+  document.getElementById('delete-party-modal').style.display = 'none';
+}
+async function deleteParty() {
+  const password = document.getElementById('delete-party-password').value;
+  if (!password) {
+    document.getElementById('delete-party-error').textContent = 'Enter your password';
+    document.getElementById('delete-party-error').style.display = 'block';
+    return;
+  }
+  try {
+    const resp = await fetch('/api/delete-room', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomCode: currentRoom, password })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      document.getElementById('delete-party-error').textContent = data.error || 'Failed to delete';
+      document.getElementById('delete-party-error').style.display = 'block';
+      return;
+    }
+    closeDeletePartyModal();
+    showToast('Party deleted');
+    resetAndGoHome();
+  } catch {
+    document.getElementById('delete-party-error').textContent = 'Server error';
+    document.getElementById('delete-party-error').style.display = 'block';
+  }
+}
+
+function kickPlayer(playerId) {
+  if (!socket || !currentRoom) return;
+  socket.emit('host:kick', { roomCode: currentRoom, participantId: playerId });
 }
 
 async function checkSession() {

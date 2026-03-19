@@ -182,6 +182,21 @@ function sanitizeParticipants(participants) {
     }));
 }
 
+function getAllPlayers(room) {
+    const players = sanitizeParticipants(room.participants);
+    if (room.arbiter) {
+        players.unshift({
+            id: room.arbiter.username || room.arbiter.id,
+            name: room.arbiter.name,
+            checked: room.arbiter.checked || [],
+            card: room.arbiter.card || [],
+            hasBingo: room.arbiter.hasBingo || false,
+            isHost: true
+        });
+    }
+    return players;
+}
+
 // =======================
 // PUSH NOTIFICATIONS
 // =======================
@@ -240,6 +255,19 @@ app.post('/api/rooms', (req, res) => {
             });
         }
 
+        // One party per host at a time
+        if (username) {
+            const trimmedUser = String(username).trim().toLowerCase();
+            if (users[trimmedUser] && users[trimmedUser].activeRoom) {
+                const existing = users[trimmedUser].activeRoom;
+                if (existing.isArbiter && rooms[existing.roomCode]) {
+                    return res.status(400).json({
+                        error: 'You already host an active party. Delete it or transfer host before creating a new one.'
+                    });
+                }
+            }
+        }
+
         const roomCode = generateRoomCode();
 
         rooms[roomCode] = {
@@ -274,7 +302,7 @@ app.get('/api/rooms', (req, res) => {
     const list = Object.entries(rooms).map(([code, room]) => ({
         roomCode: code,
         partyName: room.partyName || 'Unnamed Party',
-        participantCount: Object.keys(room.participants).length,
+        participantCount: Object.keys(room.participants).length + (room.arbiter ? 1 : 0),
         gridSize: room.gridSize,
         hostName: room.arbiter?.name || 'Unknown'
     }));
@@ -341,6 +369,49 @@ app.post('/api/leave-room', (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/api/delete-room', requireAuth, async (req, res) => {
+    try {
+        const { roomCode, password } = req.body;
+        const username = req.username;
+        const user = users[username];
+
+        if (!password) return res.status(400).json({ error: 'Password required' });
+
+        const code = String(roomCode || '').toUpperCase();
+        const room = rooms[code];
+        if (!room) return res.status(404).json({ error: 'Room not found' });
+        if (!room.arbiter || room.arbiter.username !== username) {
+            return res.status(403).json({ error: 'Only the host can delete the party' });
+        }
+
+        const match = await bcrypt.compare(password, user.passwordHash);
+        if (!match) return res.status(401).json({ error: 'Incorrect password' });
+
+        // Notify all connected clients
+        io.to(code).emit('room:deleted');
+
+        // Disconnect all sockets from the room
+        const sockets = await io.in(code).fetchSockets();
+        for (const s of sockets) {
+            s.leave(code);
+        }
+
+        // Clear all users' activeRoom
+        for (const pId of Object.keys(room.participants)) {
+            if (users[pId]) users[pId].activeRoom = null;
+        }
+        if (room.arbiter.username && users[room.arbiter.username]) {
+            users[room.arbiter.username].activeRoom = null;
+        }
+
+        delete rooms[code];
+        res.json({ success: true });
+    } catch (err) {
+        console.error('DELETE ROOM ERROR:', err);
+        res.status(500).json({ error: 'Failed to delete room' });
+    }
+});
+
 // =======================
 // SOCKET LOGIC
 // =======================
@@ -380,7 +451,7 @@ io.on('connection', (socket) => {
                 gridSize: room.gridSize,
                 prompts: room.prompts,
                 partyName: room.partyName,
-                participants: room.participants,
+                participants: getAllPlayers(room),
                 arbiterCard: room.arbiter.card,
                 arbiterChecked: room.arbiter.checked
             });
@@ -421,7 +492,7 @@ io.on('connection', (socket) => {
                 });
 
                 io.to(code).emit('room:update', {
-                    participants: sanitizeParticipants(room.participants)
+                    participants: getAllPlayers(room)
                 });
                 return;
             }
@@ -465,7 +536,7 @@ io.on('connection', (socket) => {
             });
 
             io.to(code).emit('room:update', {
-                participants: sanitizeParticipants(room.participants)
+                participants: getAllPlayers(room)
             });
         } catch (err) {
             console.error('participant:join error:', err);
@@ -489,7 +560,7 @@ io.on('connection', (socket) => {
                     gridSize: room.gridSize,
                     prompts: room.prompts,
                     partyName: room.partyName,
-                    participants: room.participants,
+                    participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
                     arbiterChecked: room.arbiter.checked
                 });
@@ -509,7 +580,7 @@ io.on('connection', (socket) => {
                 });
 
                 io.to(code).emit('room:update', {
-                    participants: sanitizeParticipants(room.participants)
+                    participants: getAllPlayers(room)
                 });
             }
         } catch (err) {
@@ -582,13 +653,149 @@ io.on('connection', (socket) => {
                 sendPushToAll(room, 'PIngo!', bingoMsg);
             }
 
-            if (!isArbiter) {
-                io.to(code).emit('room:update', {
-                    participants: sanitizeParticipants(room.participants)
-                });
-            }
+            // Always emit room:update so host progress is visible to all
+            io.to(code).emit('room:update', {
+                participants: getAllPlayers(room)
+            });
         } catch (err) {
             console.error('cell:check error:', err);
+        }
+    });
+
+    socket.on('host:kick', ({ roomCode, participantId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can kick players');
+            }
+
+            const participant = room.participants[participantId];
+            if (!participant) return socket.emit('error', 'Player not found');
+
+            const name = participant.name;
+            const kickedSocketId = participant.socketId;
+
+            delete room.participants[participantId];
+            if (users[participantId]) {
+                users[participantId].activeRoom = null;
+            }
+
+            if (kickedSocketId) {
+                delete socketToUser[kickedSocketId];
+                const kickedSocket = io.sockets.sockets.get(kickedSocketId);
+                if (kickedSocket) {
+                    kickedSocket.emit('kicked');
+                    kickedSocket.leave(code);
+                }
+            }
+
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            io.to(code).emit('activity', { message: `${name} was kicked`, participantName: name });
+        } catch (err) {
+            console.error('host:kick error:', err);
+            socket.emit('error', 'Failed to kick player');
+        }
+    });
+
+    socket.on('host:transfer', ({ roomCode, newHostId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can transfer');
+            }
+
+            const newHost = room.participants[newHostId];
+            if (!newHost) return socket.emit('error', 'Player not found');
+
+            // Save old arbiter data
+            const oldArbiter = { ...room.arbiter };
+
+            // Move old arbiter to participants
+            room.participants[oldArbiter.username] = {
+                id: oldArbiter.username,
+                name: oldArbiter.name,
+                socketId: oldArbiter.socketId,
+                pushSubscription: oldArbiter.pushSubscription,
+                card: oldArbiter.card,
+                checked: oldArbiter.checked,
+                hasBingo: oldArbiter.hasBingo
+            };
+
+            // Move new host to arbiter
+            room.arbiter = {
+                id: newHost.id,
+                name: newHost.name,
+                username: newHost.id,
+                socketId: newHost.socketId,
+                pushSubscription: newHost.pushSubscription,
+                card: newHost.card,
+                checked: newHost.checked,
+                hasBingo: newHost.hasBingo
+            };
+            delete room.participants[newHostId];
+
+            // Update activeRoom
+            if (users[oldArbiter.username]) {
+                users[oldArbiter.username].activeRoom = { roomCode: code, isArbiter: false };
+            }
+            if (users[newHostId]) {
+                users[newHostId].activeRoom = { roomCode: code, isArbiter: true };
+            }
+
+            // Update socketToUser
+            if (oldArbiter.socketId) {
+                socketToUser[oldArbiter.socketId] = { username: oldArbiter.username, roomCode: code };
+            }
+            if (newHost.socketId) {
+                socketToUser[newHost.socketId] = { username: newHostId, roomCode: code };
+            }
+
+            // Notify old host: become participant
+            if (oldArbiter.socketId) {
+                const oldSocket = io.sockets.sockets.get(oldArbiter.socketId);
+                if (oldSocket) {
+                    oldSocket.emit('role:changed', {
+                        newRole: 'participant',
+                        data: {
+                            participantId: oldArbiter.username,
+                            card: oldArbiter.card,
+                            checked: oldArbiter.checked,
+                            gridSize: room.gridSize,
+                            roomCode: code,
+                            partyName: room.partyName
+                        }
+                    });
+                }
+            }
+
+            // Notify new host: become arbiter
+            if (newHost.socketId) {
+                const newSocket = io.sockets.sockets.get(newHost.socketId);
+                if (newSocket) {
+                    newSocket.emit('role:changed', {
+                        newRole: 'arbiter',
+                        data: {
+                            roomCode: code,
+                            gridSize: room.gridSize,
+                            prompts: room.prompts,
+                            partyName: room.partyName,
+                            participants: getAllPlayers(room),
+                            arbiterCard: room.arbiter.card,
+                            arbiterChecked: room.arbiter.checked
+                        }
+                    });
+                }
+            }
+
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            io.to(code).emit('activity', { message: `${newHost.name} is now the host`, participantName: newHost.name });
+        } catch (err) {
+            console.error('host:transfer error:', err);
+            socket.emit('error', 'Failed to transfer host');
         }
     });
 
