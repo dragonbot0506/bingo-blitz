@@ -1101,13 +1101,24 @@
   <button class="btn btn-secondary" onclick="closeBingoOverlay()" style="margin-top:16px;">Dismiss</button>
 </div>
 
-<!-- ──────────────────────── CONFIRM MODAL ──────────────────────── -->
+<!-- ──────────────────────── CONFIRM MODAL (LEAVE) ──────────────────────── -->
 <div id="confirm-modal">
   <div class="confirm-box">
     <p>Are you sure you want to leave this game?</p>
     <div class="confirm-btns">
       <button class="btn btn-secondary" onclick="cancelLeave()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmLeave()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── CELL CONFIRM MODAL ──────────────────────── -->
+<div id="cell-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:600;align-items:center;justify-content:center;">
+  <div class="confirm-box" style="padding:24px 20px;gap:16px;">
+    <p id="cell-confirm-text" style="font-size:15px;">Mark this as completed?</p>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelCellConfirm()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmCellCheck()">Confirm</button>
     </div>
   </div>
 </div>
@@ -1329,9 +1340,32 @@ function renderBingoGrid(gridId, card, checked, size, isArbiter) {
   };
 }
 
+let pendingCellIndex = null;
+
 function toggleCell(index, isArbiter) {
   if (!socket || !currentRoom) return;
-  socket.emit('cell:check', { roomCode: currentRoom, cellIndex: index });
+  const card = isArbiter ? arbiterCard : myCard;
+  const checked = isArbiter ? arbiterChecked : myChecked;
+  const promptText = card[index] || '';
+  const isChecked = checked.has(index);
+
+  pendingCellIndex = index;
+  document.getElementById('cell-confirm-text').textContent =
+    isChecked ? `Unmark "${promptText}"?` : `Mark "${promptText}" as completed?`;
+  document.getElementById('cell-confirm-modal').style.display = 'flex';
+}
+
+function confirmCellCheck() {
+  document.getElementById('cell-confirm-modal').style.display = 'none';
+  if (pendingCellIndex !== null && socket && currentRoom) {
+    socket.emit('cell:check', { roomCode: currentRoom, cellIndex: pendingCellIndex });
+  }
+  pendingCellIndex = null;
+}
+
+function cancelCellConfirm() {
+  document.getElementById('cell-confirm-modal').style.display = 'none';
+  pendingCellIndex = null;
 }
 
 // ── PARTICIPANTS ──

@@ -329,10 +329,8 @@ app.post('/api/leave-room', (req, res) => {
             room.arbiter = null;
         } else if (room.participants[username]) {
             const name = room.participants[username].name;
-            delete room.participants[username];
-            io.to(roomCode).emit('room:update', {
-                participants: sanitizeParticipants(room.participants)
-            });
+            // Keep participant data for state persistence — only clear socket
+            room.participants[username].socketId = null;
             io.to(roomCode).emit('activity', {
                 message: `${name} left the game`,
                 participantName: name
