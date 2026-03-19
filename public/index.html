@@ -864,6 +864,7 @@
     <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
+    <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="leaveRoom()">LEAVE</button>
   </div>
 
   <div id="push-banner-p" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
@@ -913,6 +914,7 @@
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
+    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="leaveRoom()">LEAVE</button>
   </div>
 
   <div id="push-banner-a" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
@@ -1092,7 +1094,8 @@ async function createRoom() {
 
   const body = {
     password, gridSize: sz, prompts,
-    arbiterId, arbiterName: name
+    arbiterId, arbiterName: name,
+    username: loggedInUser
   };
 
   try {
@@ -1108,16 +1111,8 @@ async function createRoom() {
     gridSize = sz;
 
     initSocket();
-    socket.emit('arbiter:join', { roomCode: currentRoom, arbiterId });
-    socket.on('arbiter:joined', (roomData) => {
-      setupArbiterDashboard(name, roomData);
-    });
-
-    socket.on('cell:updated', (data) => {
-      arbiterChecked = new Set(data.checked);
-      renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
-      if (data.hasBingo) showToast('🎉 You got BINGO!');
-    });
+    setupSocketListeners(true);
+    socket.emit('arbiter:join', { roomCode: currentRoom, arbiterId, username: loggedInUser });
 
   } catch (err) {
     showToast('Server error. Make sure the server is running.');
@@ -1130,12 +1125,9 @@ function setupArbiterDashboard(name, roomData) {
   document.getElementById('info-room-code').textContent = roomData.roomCode;
   document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
 
-  // Give arbiter a card
-  const shuffled = shuffleArray([...roomData.prompts]).slice(0, roomData.gridSize * roomData.gridSize);
-  const center = Math.floor(shuffled.length / 2);
-  if (roomData.gridSize % 2 === 1) shuffled[center] = 'FREE';
-  arbiterCard = shuffled;
-  arbiterChecked = new Set(roomData.gridSize % 2 === 1 ? [center] : []);
+  // Use server-provided arbiter card (persisted across sessions)
+  arbiterCard = roomData.arbiterCard;
+  arbiterChecked = new Set(roomData.arbiterChecked || []);
 
   renderBingoHeader('a-bingo-header', roomData.gridSize);
   renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, roomData.gridSize, true);
@@ -1165,34 +1157,8 @@ async function joinRoom() {
   if (!name) return showToast('Enter your name!');
 
   initSocket();
-  socket.emit('participant:join', { roomCode: code, password, name });
-
-  socket.off('participant:joined');
-  socket.on('participant:joined', (data) => {
-    currentRoom = data.roomCode;
-    myParticipantId = data.participantId;
-    myCard = data.card;
-    myChecked = new Set(data.checked);
-    gridSize = data.gridSize;
-
-    document.getElementById('p-player-name').textContent = name;
-    document.getElementById('p-room-code').textContent = data.roomCode;
-
-    renderBingoHeader('p-bingo-header', gridSize);
-    renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
-
-    if ('PushManager' in window) {
-      document.getElementById('push-banner-p').style.display = 'block';
-    }
-
-    socket.on('cell:updated', (upd) => {
-      myChecked = new Set(upd.checked);
-      renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
-      if (upd.hasBingo) showToast('🎉 BINGO! You did it!');
-    });
-
-    showScreen('screen-participant');
-  });
+  setupSocketListeners(false);
+  socket.emit('participant:join', { roomCode: code, password, name, username: loggedInUser });
 }
 
 // ── BINGO GRID RENDERING ──
@@ -1242,7 +1208,7 @@ function renderParticipants(containerId, participants, total) {
     const pct = Math.round((p.checked.length / total) * 100);
     return `
       <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}">
-        <div class="participant-name">${p.id === myParticipantId ? '⭐ ' : ''}${p.name}</div>
+        <div class="participant-name">${p.id === loggedInUser ? '⭐ ' : ''}${p.name}</div>
         ${p.hasBingo ? '<div class="bingo-tag">🎉 BINGO!</div>' : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
@@ -1472,7 +1438,7 @@ async function doSignup() {
     if (!resp.ok) return showToast(data.error);
 
     loggedInUser = data.username;
-    enterApp();
+    enterApp(data.activeRoom);
   } catch {
     showToast('Server error');
   }
@@ -1494,7 +1460,7 @@ async function doLogin() {
     if (!resp.ok) return showToast(data.error);
 
     loggedInUser = data.username;
-    enterApp();
+    enterApp(data.activeRoom);
   } catch {
     showToast('Server error');
   }
@@ -1506,11 +1472,23 @@ async function doLogout() {
   showScreen('screen-auth');
 }
 
-function enterApp() {
+function enterApp(activeRoom) {
   document.getElementById('welcome-user').textContent = 'Logged in as ' + loggedInUser;
   // Pre-fill name fields with username
   document.getElementById('setup-arbiter-name').value = loggedInUser;
   document.getElementById('join-name').value = loggedInUser;
+
+  // Auto-rejoin active room if one exists
+  if (activeRoom) {
+    initSocket();
+    setupSocketListeners(activeRoom.isArbiter);
+    socket.emit('rejoin', {
+      roomCode: activeRoom.roomCode,
+      username: loggedInUser,
+      isArbiter: activeRoom.isArbiter
+    });
+    return;
+  }
 
   const params = new URLSearchParams(location.search);
   const joinCode = params.get('join');
@@ -1522,13 +1500,75 @@ function enterApp() {
   }
 }
 
+function setupSocketListeners(isArbiter) {
+  if (isArbiter) {
+    socket.off('arbiter:joined');
+    socket.on('arbiter:joined', (roomData) => {
+      currentRoom = roomData.roomCode;
+      gridSize = roomData.gridSize;
+      setupArbiterDashboard(loggedInUser, roomData);
+    });
+    socket.off('cell:updated');
+    socket.on('cell:updated', (data) => {
+      arbiterChecked = new Set(data.checked);
+      renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
+      if (data.hasBingo) showToast('🎉 You got BINGO!');
+    });
+  } else {
+    socket.off('participant:joined');
+    socket.on('participant:joined', (data) => {
+      currentRoom = data.roomCode;
+      myParticipantId = data.participantId;
+      myCard = data.card;
+      myChecked = new Set(data.checked);
+      gridSize = data.gridSize;
+
+      document.getElementById('p-player-name').textContent = loggedInUser;
+      document.getElementById('p-room-code').textContent = data.roomCode;
+
+      renderBingoHeader('p-bingo-header', gridSize);
+      renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+
+      if ('PushManager' in window) {
+        document.getElementById('push-banner-p').style.display = 'block';
+      }
+
+      socket.off('cell:updated');
+      socket.on('cell:updated', (upd) => {
+        myChecked = new Set(upd.checked);
+        renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+        if (upd.hasBingo) showToast('🎉 BINGO! You did it!');
+      });
+
+      showScreen('screen-participant');
+    });
+  }
+}
+
+async function leaveRoom() {
+  try {
+    await fetch('/api/leave-room', { method: 'POST' });
+  } catch {}
+  currentRoom = null;
+  myParticipantId = null;
+  myCard = [];
+  myChecked = new Set();
+  arbiterCard = [];
+  arbiterChecked = new Set();
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  showScreen('screen-landing');
+}
+
 async function checkSession() {
   try {
     const resp = await fetch('/api/me');
     if (resp.ok) {
       const data = await resp.json();
       loggedInUser = data.username;
-      enterApp();
+      enterApp(data.activeRoom);
       return;
     }
   } catch {}

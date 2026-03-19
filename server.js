@@ -20,8 +20,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // =======================
 // AUTH - In-memory stores
 // =======================
-const users = {};      // { username: { username, passwordHash } }
+const users = {};      // { username: { username, passwordHash, activeRoom: null } }
 const sessions = {};   // { sessionToken: username }
+const socketToUser = {}; // { socketId: { username, roomCode } }
 
 function requireAuth(req, res, next) {
     const token = req.cookies?.session;
@@ -48,12 +49,12 @@ app.post('/api/signup', async (req, res) => {
         return res.status(409).json({ error: 'Username already taken' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    users[trimmed] = { username: trimmed, passwordHash };
+    users[trimmed] = { username: trimmed, passwordHash, activeRoom: null };
 
     const token = crypto.randomUUID();
     sessions[token] = trimmed;
     res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
-    res.json({ username: trimmed });
+    res.json({ username: trimmed, activeRoom: null });
 });
 
 app.post('/api/login', async (req, res) => {
@@ -73,7 +74,7 @@ app.post('/api/login', async (req, res) => {
     const token = crypto.randomUUID();
     sessions[token] = trimmed;
     res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
-    res.json({ username: trimmed });
+    res.json({ username: trimmed, activeRoom: getUserActiveRoom(trimmed) });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -88,8 +89,21 @@ app.get('/api/me', (req, res) => {
     if (!token || !sessions[token]) {
         return res.status(401).json({ error: 'Not authenticated' });
     }
-    res.json({ username: sessions[token] });
+    const username = sessions[token];
+    res.json({ username, activeRoom: getUserActiveRoom(username) });
 });
+
+function getUserActiveRoom(username) {
+    const user = users[username];
+    if (!user || !user.activeRoom) return null;
+    const { roomCode, isArbiter } = user.activeRoom;
+    const room = rooms[roomCode];
+    if (!room) {
+        user.activeRoom = null;
+        return null;
+    }
+    return { roomCode, isArbiter };
+}
 
 // Web Push VAPID setup
 let vapidPublicKey;
@@ -205,7 +219,8 @@ app.post('/api/rooms', (req, res) => {
             gridSize,
             prompts,
             arbiterId,
-            arbiterName
+            arbiterName,
+            username
         } = req.body;
 
         const parsedGridSize = Number(gridSize);
@@ -234,7 +249,12 @@ app.post('/api/rooms', (req, res) => {
             arbiter: {
                 id: arbiterId || 'host',
                 name: arbiterName || 'Host',
-                pushSubscription: null
+                username: username || null,
+                socketId: null,
+                pushSubscription: null,
+                card: null,
+                checked: [],
+                hasBingo: false
             },
             createdAt: Date.now()
         };
@@ -276,6 +296,40 @@ app.post('/api/push-subscribe', (req, res) => {
     res.json({ success: true });
 });
 
+app.post('/api/leave-room', (req, res) => {
+    const token = req.cookies?.session;
+    if (!token || !sessions[token]) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const username = sessions[token];
+    const user = users[username];
+    if (!user || !user.activeRoom) {
+        return res.json({ success: true });
+    }
+
+    const { roomCode, isArbiter } = user.activeRoom;
+    const room = rooms[roomCode];
+    user.activeRoom = null;
+
+    if (room) {
+        if (isArbiter) {
+            room.arbiter = null;
+        } else if (room.participants[username]) {
+            const name = room.participants[username].name;
+            delete room.participants[username];
+            io.to(roomCode).emit('room:update', {
+                participants: sanitizeParticipants(room.participants)
+            });
+            io.to(roomCode).emit('activity', {
+                message: `${name} left the game`,
+                participantName: name
+            });
+        }
+    }
+
+    res.json({ success: true });
+});
+
 // =======================
 // SOCKET LOGIC
 // =======================
@@ -283,18 +337,40 @@ app.post('/api/push-subscribe', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
 
-    socket.on('arbiter:join', ({ roomCode }) => {
+    socket.on('arbiter:join', ({ roomCode, username }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
             const room = rooms[code];
             if (!room) return socket.emit('error', 'Room not found');
+
+            // Store arbiter's socket and username
+            room.arbiter.socketId = socket.id;
+            room.arbiter.username = username;
+            socketToUser[socket.id] = { username, roomCode: code };
+
+            // Generate arbiter card on server if not already created
+            if (!room.arbiter.card) {
+                const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
+                const center = Math.floor(shuffled.length / 2);
+                if (room.gridSize % 2 === 1) shuffled[center] = 'FREE';
+                room.arbiter.card = shuffled;
+                room.arbiter.checked = room.gridSize % 2 === 1 ? [center] : [];
+                room.arbiter.hasBingo = false;
+            }
+
+            // Set user's active room
+            if (username && users[username]) {
+                users[username].activeRoom = { roomCode: code, isArbiter: true };
+            }
 
             socket.join(code);
             socket.emit('arbiter:joined', {
                 roomCode: code,
                 gridSize: room.gridSize,
                 prompts: room.prompts,
-                participants: room.participants
+                participants: room.participants,
+                arbiterCard: room.arbiter.card,
+                arbiterChecked: room.arbiter.checked
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -302,7 +378,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('participant:join', ({ roomCode, password, name }) => {
+    socket.on('participant:join', ({ roomCode, password, name, username }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
             const room = rooms[code];
@@ -310,7 +386,32 @@ io.on('connection', (socket) => {
             if (!room) return socket.emit('error', 'Room not found');
             if (room.password !== password) return socket.emit('error', 'Wrong password');
 
-            const participantId = socket.id;
+            const participantKey = username || socket.id;
+
+            // If this user already has a card in this room, rejoin with existing state
+            if (room.participants[participantKey]) {
+                const existing = room.participants[participantKey];
+                existing.socketId = socket.id;
+                socketToUser[socket.id] = { username: participantKey, roomCode: code };
+
+                if (username && users[username]) {
+                    users[username].activeRoom = { roomCode: code, isArbiter: false };
+                }
+
+                socket.join(code);
+                socket.emit('participant:joined', {
+                    participantId: participantKey,
+                    card: existing.card,
+                    checked: existing.checked,
+                    gridSize: room.gridSize,
+                    roomCode: code
+                });
+
+                io.to(code).emit('room:update', {
+                    participants: sanitizeParticipants(room.participants)
+                });
+                return;
+            }
 
             const shuffled = shuffleArray(room.prompts).slice(0, room.gridSize * room.gridSize);
             const totalCells = room.gridSize * room.gridSize;
@@ -323,19 +424,26 @@ io.on('connection', (socket) => {
 
             const checked = new Set(room.gridSize % 2 === 1 ? [centerIdx] : []);
 
-            room.participants[participantId] = {
-                id: participantId,
+            room.participants[participantKey] = {
+                id: participantKey,
                 name: name || 'Player',
+                socketId: socket.id,
                 pushSubscription: null,
                 card,
                 checked: [...checked],
                 hasBingo: false
             };
 
+            socketToUser[socket.id] = { username: participantKey, roomCode: code };
+
+            if (username && users[username]) {
+                users[username].activeRoom = { roomCode: code, isArbiter: false };
+            }
+
             socket.join(code);
 
             socket.emit('participant:joined', {
-                participantId,
+                participantId: participantKey,
                 card,
                 checked: [...checked],
                 gridSize: room.gridSize,
@@ -351,13 +459,68 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('rejoin', ({ roomCode, username, isArbiter }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return socket.emit('error', 'Room not found');
+
+            if (isArbiter) {
+                if (!room.arbiter) return socket.emit('error', 'Not arbiter of this room');
+                room.arbiter.socketId = socket.id;
+                socketToUser[socket.id] = { username, roomCode: code };
+                socket.join(code);
+                socket.emit('arbiter:joined', {
+                    roomCode: code,
+                    gridSize: room.gridSize,
+                    prompts: room.prompts,
+                    participants: room.participants,
+                    arbiterCard: room.arbiter.card,
+                    arbiterChecked: room.arbiter.checked
+                });
+            } else {
+                const participant = room.participants[username];
+                if (!participant) return socket.emit('error', 'Not in this room');
+                participant.socketId = socket.id;
+                socketToUser[socket.id] = { username, roomCode: code };
+                socket.join(code);
+                socket.emit('participant:joined', {
+                    participantId: username,
+                    card: participant.card,
+                    checked: participant.checked,
+                    gridSize: room.gridSize,
+                    roomCode: code
+                });
+
+                io.to(code).emit('room:update', {
+                    participants: sanitizeParticipants(room.participants)
+                });
+            }
+        } catch (err) {
+            console.error('rejoin error:', err);
+            socket.emit('error', 'Failed to rejoin');
+        }
+    });
+
     socket.on('cell:check', ({ roomCode, cellIndex }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
             const room = rooms[code];
             if (!room) return;
 
-            const participant = room.participants[socket.id];
+            // Look up participant by socketToUser mapping
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+
+            // Check if it's the arbiter
+            let participant;
+            let isArbiter = false;
+            if (room.arbiter && room.arbiter.socketId === socket.id) {
+                participant = room.arbiter;
+                isArbiter = true;
+            } else {
+                participant = room.participants[userInfo.username];
+            }
             if (!participant) return;
 
             if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= participant.card.length) {
@@ -403,9 +566,11 @@ io.on('connection', (socket) => {
                 sendPushToAll(room, 'BINGO!', bingoMsg);
             }
 
-            io.to(code).emit('room:update', {
-                participants: sanitizeParticipants(room.participants)
-            });
+            if (!isArbiter) {
+                io.to(code).emit('room:update', {
+                    participants: sanitizeParticipants(room.participants)
+                });
+            }
         } catch (err) {
             console.error('cell:check error:', err);
         }
@@ -413,19 +578,18 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         try {
+            // Just clear the socket mapping — do NOT delete the participant
+            delete socketToUser[socket.id];
+
+            // Clear socketId from any participant/arbiter that had this socket
             for (const [code, room] of Object.entries(rooms)) {
-                if (room.participants[socket.id]) {
-                    const name = room.participants[socket.id].name;
-                    delete room.participants[socket.id];
-
-                    io.to(code).emit('room:update', {
-                        participants: sanitizeParticipants(room.participants)
-                    });
-
-                    io.to(code).emit('activity', {
-                        message: `${name} left the game`,
-                        participantName: name
-                    });
+                if (room.arbiter && room.arbiter.socketId === socket.id) {
+                    room.arbiter.socketId = null;
+                }
+                for (const p of Object.values(room.participants)) {
+                    if (p.socketId === socket.id) {
+                        p.socketId = null;
+                    }
                 }
             }
         } catch (err) {
