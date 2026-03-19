@@ -201,22 +201,31 @@ function getAllPlayers(room) {
 // PUSH NOTIFICATIONS
 // =======================
 
-async function sendPushToAll(room, title, body) {
-    const subscriptions = Object.values(room.participants)
-        .map(p => p.pushSubscription)
-        .filter(Boolean);
+async function sendPushToAll(room, title, body, excludeUsername, type) {
+    const payload = JSON.stringify({ title, body, type: type || 'activity' });
+    const targets = [];
 
-    if (room.arbiter?.pushSubscription) {
-        subscriptions.push(room.arbiter.pushSubscription);
+    for (const [id, p] of Object.entries(room.participants)) {
+        if (p.pushSubscription && id !== excludeUsername) {
+            targets.push({ sub: p.pushSubscription, owner: p, label: `participant:${id}` });
+        }
     }
 
-    const payload = JSON.stringify({ title, body });
+    if (room.arbiter?.pushSubscription && room.arbiter.username !== excludeUsername) {
+        targets.push({ sub: room.arbiter.pushSubscription, owner: room.arbiter, label: 'arbiter' });
+    }
 
-    for (const sub of subscriptions) {
+    for (const target of targets) {
         try {
-            await webpush.sendNotification(sub, payload);
+            await webpush.sendNotification(target.sub, payload);
         } catch (err) {
-            console.error('Push send failed:', err.statusCode || err.message);
+            const status = err.statusCode;
+            console.error(`Push send failed (${target.label}):`, status || err.message);
+            // Remove expired or invalid subscriptions
+            if (status === 410 || status === 404 || status === 401) {
+                target.owner.pushSubscription = null;
+                console.log(`Removed stale push subscription for ${target.label}`);
+            }
         }
     }
 }
@@ -668,7 +677,7 @@ io.on('connection', (socket) => {
                     prompt: promptText
                 });
 
-                sendPushToAll(room, 'Task Completed!', message);
+                sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
             }
 
             if (!hadBingo && participant.hasBingo) {
@@ -679,7 +688,7 @@ io.on('connection', (socket) => {
                     message: bingoMsg
                 });
 
-                sendPushToAll(room, 'PIngo!', bingoMsg);
+                sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
             }
 
             // Always emit room:update so host progress is visible to all

@@ -1691,22 +1691,67 @@ let vapidPublicKey = null;
 
 async function showPushBannerIfNeeded() {
   if (!('PushManager' in window) || !('serviceWorker' in navigator)) return;
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (sub) {
-      // Already subscribed — hide banners
-      document.getElementById('push-banner-p').style.display = 'none';
-      document.getElementById('push-banner-a').style.display = 'none';
-      return;
-    }
-  } catch {}
-  // Not subscribed — show the relevant banner
-  const isArbiter = document.getElementById('screen-arbiter').classList.contains('active');
-  if (isArbiter) {
+
+  // If permission already granted, auto-register with the server and hide banners
+  if (Notification.permission === 'granted') {
+    document.getElementById('push-banner-p').style.display = 'none';
+    document.getElementById('push-banner-a').style.display = 'none';
+    autoRegisterPush();
+    return;
+  }
+
+  // If permission denied, nothing we can do — hide banners
+  if (Notification.permission === 'denied') {
+    document.getElementById('push-banner-p').style.display = 'none';
+    document.getElementById('push-banner-a').style.display = 'none';
+    return;
+  }
+
+  // Permission is 'default' — show banner so user can opt in
+  if (isCurrentlyArbiter) {
     document.getElementById('push-banner-a').style.display = 'block';
   } else {
     document.getElementById('push-banner-p').style.display = 'block';
+  }
+}
+
+async function autoRegisterPush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  if (Notification.permission !== 'granted') return;
+  if (!currentRoom) return;
+
+  try {
+    if (!vapidPublicKey) {
+      const resp = await fetch('/api/vapid-public-key');
+      const data = await resp.json();
+      vapidPublicKey = data.publicKey;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+    }
+
+    pushSubscription = sub;
+
+    // Always re-register with the server for the current room
+    await fetch('/api/push-subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomCode: currentRoom,
+        participantId: loggedInUser,
+        subscription: sub.toJSON(),
+        isArbiter: isCurrentlyArbiter
+      })
+    });
+  } catch (err) {
+    console.error('Auto push registration failed:', err);
   }
 }
 
@@ -1734,10 +1779,13 @@ async function subscribeToPush() {
     }
 
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-    });
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+      });
+    }
 
     pushSubscription = sub;
     return sub;
@@ -1749,7 +1797,6 @@ async function subscribeToPush() {
 }
 
 async function enableNotifications() {
-  const isArbiter = document.getElementById('screen-arbiter').classList.contains('active');
   const sub = await subscribeToPush();
   if (!sub) return;
 
@@ -1758,9 +1805,9 @@ async function enableNotifications() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       roomCode: currentRoom,
-      participantId: isArbiter ? arbiterId : myParticipantId,
+      participantId: loggedInUser,
       subscription: sub.toJSON(),
-      isArbiter
+      isArbiter: isCurrentlyArbiter
     })
   });
 
