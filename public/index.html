@@ -1019,7 +1019,8 @@
 <!-- ──────────────────────── PARTICIPANT BOARD ──────────────────────── -->
 <div id="screen-participant" class="screen">
   <div class="top-bar">
-    <div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="p-player-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1071,7 +1072,8 @@
 <!-- ──────────────────────── ARBITER DASHBOARD ──────────────────────── -->
 <div id="screen-arbiter" class="screen">
   <div class="top-bar">
-    <div>
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1183,6 +1185,17 @@
   </div>
 </div>
 
+<!-- ──────────────────────── KICK CONFIRM MODAL ──────────────────────── -->
+<div id="kick-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p id="kick-confirm-text" style="font-size:16px;">Are you sure you want to remove this player?</p>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="cancelKick()">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmKick()">Remove</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── HOST ACTIONS MODAL ──────────────────────── -->
 <div id="host-actions-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
   <div class="confirm-box">
@@ -1266,6 +1279,16 @@ function switchTab(btn, panelId) {
 function initSocket() {
   if (socket) return;
   socket = io();
+  // Re-associate with room on reconnect (fixes host cell check after network drop)
+  socket.on('connect', () => {
+    if (currentRoom && loggedInUser) {
+      socket.emit('rejoin', {
+        roomCode: currentRoom,
+        username: loggedInUser,
+        isArbiter: isCurrentlyArbiter
+      });
+    }
+  });
   socket.on('error', (msg) => showToast('⚠️ ' + msg));
   socket.on('activity', (data) => {
     addActivity(data.message, false);
@@ -1312,6 +1335,10 @@ function resetAndGoHome() {
     socket.disconnect();
     socket = null;
   }
+  showScreen('screen-landing');
+}
+
+function goBackToHome() {
   showScreen('screen-landing');
 }
 
@@ -2090,9 +2117,28 @@ async function deleteParty() {
   }
 }
 
+let pendingKickPlayerId = null;
+
 function kickPlayer(playerId) {
   if (!socket || !currentRoom) return;
-  socket.emit('host:kick', { roomCode: currentRoom, participantId: playerId });
+  pendingKickPlayerId = playerId;
+  const player = currentParticipants.find(p => p.id === playerId);
+  const name = player ? player.name : 'this player';
+  document.getElementById('kick-confirm-text').textContent = `Are you sure you want to remove ${name}?`;
+  document.getElementById('kick-confirm-modal').style.display = 'flex';
+}
+
+function confirmKick() {
+  document.getElementById('kick-confirm-modal').style.display = 'none';
+  if (pendingKickPlayerId && socket && currentRoom) {
+    socket.emit('host:kick', { roomCode: currentRoom, participantId: pendingKickPlayerId });
+  }
+  pendingKickPlayerId = null;
+}
+
+function cancelKick() {
+  document.getElementById('kick-confirm-modal').style.display = 'none';
+  pendingKickPlayerId = null;
 }
 
 // ── MY PARTIES ──
