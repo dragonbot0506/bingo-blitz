@@ -1,5 +1,5 @@
 self.addEventListener('push', function(event) {
-  let data = { title: 'Bingo Blitz', body: 'Something happened!' };
+  let data = { title: 'PIngo', body: 'Something happened!' };
   try {
     data = event.data.json();
   } catch (e) {}
@@ -10,7 +10,7 @@ self.addEventListener('push', function(event) {
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       vibrate: [200, 100, 200],
-      tag: 'bingo-notification',
+      tag: 'pingo-notification',
       renotify: true
     })
   );

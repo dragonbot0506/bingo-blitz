@@ -1,6 +1,6 @@
 {
-  "name": "Bingo Blitz",
-  "short_name": "BingoBlitz",
+  "name": "PIngo",
+  "short_name": "PIngo",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",

@@ -1,7 +1,7 @@
 {
   "name": "pingo",
   "version": "1.0.0",
-  "description": "PIngo - Party Bingo with push notifications",
+  "description": "PIngo - Party PIngo with push notifications",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

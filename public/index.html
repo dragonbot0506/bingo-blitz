@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="manifest" href="/manifest.json" />
-  <title>BINGO BLITZ</title>
+  <title>PIngo</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
@@ -36,7 +36,9 @@
       background: var(--bg);
       color: var(--text);
       font-family: var(--font-body);
-      overflow-x: hidden;
+      overflow: hidden;
+      position: fixed;
+      width: 100%;
       -webkit-tap-highlight-color: transparent;
     }
 
@@ -55,7 +57,8 @@
     .screen {
       display: none;
       flex-direction: column;
-      min-height: 100svh;
+      height: 100svh;
+      overflow: hidden;
       padding: 0;
     }
     .screen.active { display: flex; }
@@ -533,6 +536,78 @@
       color: var(--text);
     }
 
+    /* ── LOBBY ── */
+    .lobby-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .lobby-card {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .lobby-card:active {
+      border-color: var(--accent);
+    }
+    .lobby-card-name {
+      font-family: var(--font-display);
+      font-size: 20px;
+      color: var(--accent);
+      letter-spacing: 0.03em;
+    }
+    .lobby-card-info {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .lobby-card-players {
+      font-family: var(--font-display);
+      font-size: 18px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    /* ── CONFIRM MODAL ── */
+    #confirm-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 600;
+      align-items: center;
+      justify-content: center;
+    }
+    #confirm-modal.show { display: flex; }
+    .confirm-box {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      max-width: 320px;
+      width: 90%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .confirm-box p {
+      font-size: 16px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .confirm-btns {
+      display: flex;
+      gap: 12px;
+    }
+    .confirm-btns .btn { flex: 1; }
+
     /* ── ARBITER SETUP FLOW ── */
     #screen-arbiter-setup {
       padding: 0;
@@ -717,11 +792,10 @@
 <body>
 
 <!-- ──────────────────────── AUTH ──────────────────────── -->
-<div id="screen-auth" class="screen active">
+<div id="screen-auth" class="screen">
   <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:0;position:relative;overflow:hidden;">
     <div class="logo-block">
-      <div class="logo-top">BINGO</div>
-      <div class="logo-sub">BLITZ</div>
+      <div class="logo-top">PIngo</div>
     </div>
 
     <!-- Auth Toggle Tabs -->
@@ -765,14 +839,43 @@
 <!-- ──────────────────────── LANDING ──────────────────────── -->
 <div id="screen-landing" class="screen">
   <div class="logo-block">
-    <div class="logo-top">BINGO</div>
-    <div class="logo-sub">BLITZ</div>
+    <div class="logo-top">PIngo</div>
   </div>
   <div id="welcome-user" style="font-size:14px;color:var(--muted);margin-bottom:24px;text-align:center;"></div>
   <div class="landing-btns">
     <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">⚡ CREATE GAME</button>
     <button class="btn btn-secondary" onclick="showScreen('screen-join')">🎯 JOIN GAME</button>
+    <button class="btn btn-secondary" onclick="openLobby()">🏠 BROWSE PARTIES</button>
     <button class="btn btn-ghost" onclick="doLogout()" style="margin-top:8px;">Log Out</button>
+  </div>
+</div>
+
+<!-- ──────────────────────── LOBBY ──────────────────────── -->
+<div id="screen-lobby" class="screen">
+  <div class="top-bar">
+    <button class="btn btn-ghost" onclick="showScreen('screen-landing')">← Back</button>
+    <div class="top-bar-title">PARTIES</div>
+    <button class="btn btn-ghost" onclick="loadLobby()">Refresh</button>
+  </div>
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;">
+    <div id="lobby-list" class="lobby-list">
+      <div class="empty-state">Loading parties...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── LOBBY PASSWORD MODAL ──────────────────────── -->
+<div id="lobby-password-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
+  <div class="confirm-box">
+    <p id="lobby-modal-title" style="font-family:var(--font-display);font-size:20px;color:var(--accent);"></p>
+    <div class="form-group" style="text-align:left;">
+      <label>Password</label>
+      <input id="lobby-password-input" type="text" placeholder="Enter room password" autocomplete="off" />
+    </div>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="closeLobbyModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="joinFromLobby()">Join</button>
+    </div>
   </div>
 </div>
 
@@ -790,7 +893,11 @@
       <div class="setup-step">
         <div class="step-title">01 — ROOM SETUP</div>
         <div class="form-group">
-          <label>Your Name (Arbiter)</label>
+          <label>Party Name</label>
+          <input id="setup-party-name" type="text" placeholder="e.g. The Boys" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Your Name (Host)</label>
           <input id="setup-arbiter-name" type="text" placeholder="e.g. Alex" autocomplete="off" />
         </div>
         <div class="form-group">
@@ -856,7 +963,10 @@
       <span class="status-dot"></span>
       <span id="p-player-name" style="font-weight:700;font-size:15px;"></span>
     </div>
-    <div class="top-bar-title">BINGO</div>
+    <div style="text-align:center;">
+      <div class="top-bar-title">PIngo</div>
+      <div id="p-party-name" style="font-size:12px;color:var(--muted);margin-top:-2px;"></div>
+    </div>
     <div class="room-badge" id="p-room-code"></div>
   </div>
 
@@ -864,7 +974,7 @@
     <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
-    <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="leaveRoom()">LEAVE</button>
+    <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="showLeaveConfirm()">LEAVE</button>
   </div>
 
   <div id="push-banner-p" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
@@ -905,7 +1015,10 @@
       <span class="status-dot"></span>
       <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
     </div>
-    <div class="top-bar-title">ARBITER</div>
+    <div style="text-align:center;">
+      <div class="top-bar-title">HOST</div>
+      <div id="a-party-name" style="font-size:12px;color:var(--muted);margin-top:-2px;"></div>
+    </div>
     <div class="room-badge" id="a-room-code" style="cursor:pointer;" onclick="copyRoomCode()"></div>
   </div>
 
@@ -914,7 +1027,7 @@
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
-    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="leaveRoom()">LEAVE</button>
+    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showLeaveConfirm()">LEAVE</button>
   </div>
 
   <div id="push-banner-a" style="display:none;padding:12px 16px;background:var(--surface2);border-bottom:1px solid var(--border);text-align:center;">
@@ -952,6 +1065,10 @@
       <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px;">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;">
           <div class="info-row">
+            <span>Party Name</span>
+            <strong id="info-party-name"></strong>
+          </div>
+          <div class="info-row">
             <span>Room Code</span>
             <strong id="info-room-code" style="font-family:var(--font-display);font-size:22px;color:var(--accent);letter-spacing:0.15em;"></strong>
           </div>
@@ -979,9 +1096,20 @@
 
 <!-- ──────────────────────── BINGO OVERLAY ──────────────────────── -->
 <div id="bingo-overlay">
-  <div class="bingo-big-text">BINGO!</div>
+  <div class="bingo-big-text">PIngo!</div>
   <div class="bingo-overlay-name" id="bingo-overlay-name"></div>
   <button class="btn btn-secondary" onclick="closeBingoOverlay()" style="margin-top:16px;">Dismiss</button>
+</div>
+
+<!-- ──────────────────────── CONFIRM MODAL ──────────────────────── -->
+<div id="confirm-modal">
+  <div class="confirm-box">
+    <p>Are you sure you want to leave this game?</p>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary" onclick="cancelLeave()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmLeave()">Confirm</button>
+    </div>
+  </div>
 </div>
 
 <!-- ──────────────────────── TOAST ──────────────────────── -->
@@ -1084,10 +1212,12 @@ function renderPromptList() {
 
 // ── CREATE ROOM ──
 async function createRoom() {
+  const partyName = document.getElementById('setup-party-name').value.trim();
   const name = document.getElementById('setup-arbiter-name').value.trim();
   const password = document.getElementById('setup-password').value.trim();
   const sz = parseInt(document.getElementById('setup-grid-size').value);
 
+  if (!partyName) return showToast('Enter a party name!');
   if (!name) return showToast('Enter your name!');
   if (!password) return showToast('Set a room password!');
   if (prompts.length < sz * sz) return showToast(`Need ${sz * sz} prompts for a ${sz}×${sz} grid (have ${prompts.length})`);
@@ -1095,7 +1225,8 @@ async function createRoom() {
   const body = {
     password, gridSize: sz, prompts,
     arbiterId, arbiterName: name,
-    username: loggedInUser
+    username: loggedInUser,
+    partyName
   };
 
   try {
@@ -1122,7 +1253,9 @@ async function createRoom() {
 function setupArbiterDashboard(name, roomData) {
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
+  document.getElementById('a-party-name').textContent = roomData.partyName || '';
   document.getElementById('info-room-code').textContent = roomData.roomCode;
+  document.getElementById('info-party-name').textContent = roomData.partyName || '';
   document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
 
   // Use server-provided arbiter card (persisted across sessions)
@@ -1139,9 +1272,7 @@ function setupArbiterDashboard(name, roomData) {
 
   updateParticipantDisplays(Object.values(roomData.participants || {}));
 
-  if ('PushManager' in window) {
-    document.getElementById('push-banner-a').style.display = 'block';
-  }
+  showPushBannerIfNeeded();
 
   showScreen('screen-arbiter');
 }
@@ -1162,11 +1293,11 @@ async function joinRoom() {
 }
 
 // ── BINGO GRID RENDERING ──
-const BINGO_LETTERS = ['B','I','N','G','O','E','X','T','R','A'];
+const BINGO_LETTERS = ['P','I','N','G','O','E','X','T','R','A'];
 
 function renderBingoHeader(containerId, size) {
   const el = document.getElementById(containerId);
-  const letters = size <= 5 ? 'BINGO'.slice(0, size) : BINGO_LETTERS.slice(0, size);
+  const letters = size <= 5 ? 'PINGO'.slice(0, size) : BINGO_LETTERS.slice(0, size);
   el.innerHTML = letters.split('').map(l => `<div class="bingo-letter">${l}</div>`).join('');
 }
 
@@ -1179,9 +1310,16 @@ function renderBingoGrid(gridId, card, checked, size, isArbiter) {
     const isFree = text === 'FREE';
     const isChecked = checked.has(i);
     const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    const onclick = isFree ? '' : `onclick="toggleCell(${i}, ${isArbiter})"`;
-    return `<div class="${classes}" ${onclick}><span class="bingo-cell-text">${text}</span></div>`;
+    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}"><span class="bingo-cell-text">${text}</span></div>`;
   }).join('');
+
+  // Use pointer events for reliable mobile tap handling
+  grid.onpointerup = function(e) {
+    const cell = e.target.closest('.bingo-cell');
+    if (!cell || cell.classList.contains('free')) return;
+    e.preventDefault();
+    toggleCell(parseInt(cell.dataset.index), cell.dataset.arbiter === 'true');
+  };
 }
 
 function toggleCell(index, isArbiter) {
@@ -1209,7 +1347,7 @@ function renderParticipants(containerId, participants, total) {
     return `
       <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}">
         <div class="participant-name">${p.id === loggedInUser ? '⭐ ' : ''}${p.name}</div>
-        ${p.hasBingo ? '<div class="bingo-tag">🎉 BINGO!</div>' : `
+        ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
@@ -1248,7 +1386,7 @@ function formatTime(date) {
 
 // ── BINGO OVERLAY ──
 function showBingoOverlay(name) {
-  document.getElementById('bingo-overlay-name').textContent = name + ' got BINGO!';
+  document.getElementById('bingo-overlay-name').textContent = name + ' got PIngo!';
   document.getElementById('bingo-overlay').classList.add('show');
   spawnConfetti();
   setTimeout(closeBingoOverlay, 4000);
@@ -1298,9 +1436,89 @@ function shuffleArray(arr) {
   return a;
 }
 
+// ── LOBBY ──
+let lobbySelectedRoom = null;
+
+async function openLobby() {
+  showScreen('screen-lobby');
+  await loadLobby();
+}
+
+async function loadLobby() {
+  const list = document.getElementById('lobby-list');
+  list.innerHTML = '<div class="empty-state">Loading parties...</div>';
+  try {
+    const resp = await fetch('/api/rooms');
+    const rooms = await resp.json();
+    if (rooms.length === 0) {
+      list.innerHTML = '<div class="empty-state">No active parties right now.</div>';
+      return;
+    }
+    list.innerHTML = rooms.map(r => `
+      <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${(r.partyName || '').replace(/'/g, "\\'")}')">
+        <div>
+          <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
+          <div class="lobby-card-info">${r.gridSize}×${r.gridSize} grid</div>
+        </div>
+        <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
+      </div>
+    `).join('');
+  } catch {
+    list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
+  }
+}
+
+function promptLobbyJoin(roomCode, partyName) {
+  lobbySelectedRoom = roomCode;
+  document.getElementById('lobby-modal-title').textContent = partyName || roomCode;
+  document.getElementById('lobby-password-input').value = '';
+  const modal = document.getElementById('lobby-password-modal');
+  modal.style.display = 'flex';
+}
+
+function closeLobbyModal() {
+  document.getElementById('lobby-password-modal').style.display = 'none';
+  lobbySelectedRoom = null;
+}
+
+function joinFromLobby() {
+  const password = document.getElementById('lobby-password-input').value.trim();
+  if (!password) return showToast('Enter the password!');
+  closeLobbyModal();
+
+  document.getElementById('join-code').value = lobbySelectedRoom;
+  document.getElementById('join-password').value = password;
+  document.getElementById('join-name').value = loggedInUser;
+
+  initSocket();
+  setupSocketListeners(false);
+  socket.emit('participant:join', { roomCode: lobbySelectedRoom, password, name: loggedInUser, username: loggedInUser });
+}
+
 // ── PUSH NOTIFICATIONS ──
 let pushSubscription = null;
 let vapidPublicKey = null;
+
+async function showPushBannerIfNeeded() {
+  if (!('PushManager' in window) || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      // Already subscribed — hide banners
+      document.getElementById('push-banner-p').style.display = 'none';
+      document.getElementById('push-banner-a').style.display = 'none';
+      return;
+    }
+  } catch {}
+  // Not subscribed — show the relevant banner
+  const isArbiter = document.getElementById('screen-arbiter').classList.contains('active');
+  if (isArbiter) {
+    document.getElementById('push-banner-a').style.display = 'block';
+  } else {
+    document.getElementById('push-banner-p').style.display = 'block';
+  }
+}
 
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
@@ -1512,7 +1730,7 @@ function setupSocketListeners(isArbiter) {
     socket.on('cell:updated', (data) => {
       arbiterChecked = new Set(data.checked);
       renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
-      if (data.hasBingo) showToast('🎉 You got BINGO!');
+      if (data.hasBingo) showToast('🎉 You got PIngo!');
     });
   } else {
     socket.off('participant:joined');
@@ -1525,24 +1743,34 @@ function setupSocketListeners(isArbiter) {
 
       document.getElementById('p-player-name').textContent = loggedInUser;
       document.getElementById('p-room-code').textContent = data.roomCode;
+      document.getElementById('p-party-name').textContent = data.partyName || '';
 
       renderBingoHeader('p-bingo-header', gridSize);
       renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
 
-      if ('PushManager' in window) {
-        document.getElementById('push-banner-p').style.display = 'block';
-      }
+      showPushBannerIfNeeded();
 
       socket.off('cell:updated');
       socket.on('cell:updated', (upd) => {
         myChecked = new Set(upd.checked);
         renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
-        if (upd.hasBingo) showToast('🎉 BINGO! You did it!');
+        if (upd.hasBingo) showToast('🎉 PIngo! You did it!');
       });
 
       showScreen('screen-participant');
     });
   }
+}
+
+function showLeaveConfirm() {
+  document.getElementById('confirm-modal').classList.add('show');
+}
+function cancelLeave() {
+  document.getElementById('confirm-modal').classList.remove('show');
+}
+function confirmLeave() {
+  document.getElementById('confirm-modal').classList.remove('show');
+  leaveRoom();
 }
 
 async function leaveRoom() {

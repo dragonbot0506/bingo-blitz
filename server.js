@@ -220,7 +220,8 @@ app.post('/api/rooms', (req, res) => {
             prompts,
             arbiterId,
             arbiterName,
-            username
+            username,
+            partyName
         } = req.body;
 
         const parsedGridSize = Number(gridSize);
@@ -245,6 +246,7 @@ app.post('/api/rooms', (req, res) => {
             password,
             gridSize: parsedGridSize,
             prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
+            partyName: partyName || 'Unnamed Party',
             participants: {},
             arbiter: {
                 id: arbiterId || 'host',
@@ -266,6 +268,16 @@ app.post('/api/rooms', (req, res) => {
         console.error('CREATE ROOM ERROR:', err);
         return res.status(500).json({ error: 'Server failed to create room' });
     }
+});
+
+app.get('/api/rooms', (req, res) => {
+    const list = Object.entries(rooms).map(([code, room]) => ({
+        roomCode: code,
+        partyName: room.partyName || 'Unnamed Party',
+        participantCount: Object.keys(room.participants).length,
+        gridSize: room.gridSize
+    }));
+    res.json(list);
 });
 
 app.get('/api/rooms/:code', (req, res) => {
@@ -368,6 +380,7 @@ io.on('connection', (socket) => {
                 roomCode: code,
                 gridSize: room.gridSize,
                 prompts: room.prompts,
+                partyName: room.partyName,
                 participants: room.participants,
                 arbiterCard: room.arbiter.card,
                 arbiterChecked: room.arbiter.checked
@@ -404,7 +417,8 @@ io.on('connection', (socket) => {
                     card: existing.card,
                     checked: existing.checked,
                     gridSize: room.gridSize,
-                    roomCode: code
+                    roomCode: code,
+                    partyName: room.partyName
                 });
 
                 io.to(code).emit('room:update', {
@@ -447,7 +461,8 @@ io.on('connection', (socket) => {
                 card,
                 checked: [...checked],
                 gridSize: room.gridSize,
-                roomCode: code
+                roomCode: code,
+                partyName: room.partyName
             });
 
             io.to(code).emit('room:update', {
@@ -474,6 +489,7 @@ io.on('connection', (socket) => {
                     roomCode: code,
                     gridSize: room.gridSize,
                     prompts: room.prompts,
+                    partyName: room.partyName,
                     participants: room.participants,
                     arbiterCard: room.arbiter.card,
                     arbiterChecked: room.arbiter.checked
@@ -489,7 +505,8 @@ io.on('connection', (socket) => {
                     card: participant.card,
                     checked: participant.checked,
                     gridSize: room.gridSize,
-                    roomCode: code
+                    roomCode: code,
+                    partyName: room.partyName
                 });
 
                 io.to(code).emit('room:update', {
@@ -556,14 +573,14 @@ io.on('connection', (socket) => {
             }
 
             if (!hadBingo && participant.hasBingo) {
-                const bingoMsg = `${participant.name} got BINGO!`;
+                const bingoMsg = `${participant.name} got PIngo!`;
 
                 io.to(code).emit('bingo', {
                     participantName: participant.name,
                     message: bingoMsg
                 });
 
-                sendPushToAll(room, 'BINGO!', bingoMsg);
+                sendPushToAll(room, 'PIngo!', bingoMsg);
             }
 
             if (!isArbiter) {
