@@ -992,9 +992,43 @@
       font-family: var(--font-body);
     }
 
+    #loading-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+    }
+    #loading-overlay.show { display: flex; }
+    .loading-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-label {
+      font-family: var(--font-display);
+      font-size: 14px;
+      color: var(--muted);
+      letter-spacing: 0.1em;
+    }
+
   </style>
 </head>
 <body>
+
+<!-- ──────────────────────── LOADING OVERLAY ──────────────────────── -->
+<div id="loading-overlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-label">LOADING...</div>
+</div>
 
 <!-- ──────────────────────── AUTH ──────────────────────── -->
 <div id="screen-auth" class="screen">
@@ -1423,7 +1457,7 @@
 </div>
 
 <!-- ──────────────────────── CELL CONFIRM MODAL ──────────────────────── -->
-<div id="cell-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:600;align-items:center;justify-content:center;">
+<div id="cell-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;align-items:center;justify-content:center;">
   <div class="confirm-box" style="padding:24px 20px;gap:16px;">
     <p id="cell-confirm-text" style="font-size:15px;">Mark this as completed?</p>
     <div class="confirm-btns">
@@ -1551,6 +1585,14 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
+function showLoading() {
+  document.getElementById('loading-overlay').classList.add('show');
+}
+
+function hideLoading() {
+  document.getElementById('loading-overlay').classList.remove('show');
+}
+
 function esc(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -1589,7 +1631,7 @@ function initSocket() {
       });
     }
   });
-  socket.on('error', (msg) => showToast('⚠️ ' + msg));
+  socket.on('error', (msg) => { hideLoading(); showToast('⚠️ ' + msg); });
   socket.on('activity', (data) => {
     addActivity(data.message, false);
   });
@@ -1667,6 +1709,7 @@ function resetAndGoHome() {
   gameState = 'waiting';
   roomProofRequired = new Set();
   chatLog = [];
+  activityLog = [];
   chatUnread = { p: 0, a: 0 };
   if (socket) {
     socket.disconnect();
@@ -1743,6 +1786,9 @@ async function createRoom() {
   if (!password) return showToast('Set a room password!');
   if (prompts.length < sz * sz) return showToast(`Need ${sz * sz} prompts for a ${sz}×${sz} grid (have ${prompts.length})`);
 
+  const createBtn = document.querySelector('[onclick="createRoom()"]');
+  if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'CREATING...'; }
+
   const body = {
     password, gridSize: sz, prompts,
     proofRequired: [...proofRequiredSet],
@@ -1751,6 +1797,7 @@ async function createRoom() {
     partyName
   };
 
+  showLoading();
   try {
     const resp = await fetch('/api/rooms', {
       method: 'POST',
@@ -1758,7 +1805,11 @@ async function createRoom() {
       body: JSON.stringify(body)
     });
     const data = await resp.json();
-    if (!resp.ok) return showToast(data.error || 'Failed to create room');
+    if (!resp.ok) {
+      hideLoading();
+      if (createBtn) { createBtn.disabled = false; createBtn.textContent = '🎲 CREATE ROOM'; }
+      return showToast(data.error || 'Failed to create room');
+    }
 
     currentRoom = data.roomCode;
     gridSize = sz;
@@ -1768,11 +1819,14 @@ async function createRoom() {
     socket.emit('arbiter:join', { roomCode: currentRoom, arbiterId, username: loggedInUser });
 
   } catch (err) {
+    hideLoading();
+    if (createBtn) { createBtn.disabled = false; createBtn.textContent = '🎲 CREATE ROOM'; }
     showToast('Server error. Make sure the server is running.');
   }
 }
 
 function setupArbiterDashboard(name, roomData) {
+  hideLoading();
   isCurrentlyArbiter = true;
   gameState = roomData.gameState || 'waiting';
   roomProofRequired = new Set(roomData.proofRequired || []);
@@ -1785,6 +1839,7 @@ function setupArbiterDashboard(name, roomData) {
 
   // Load room-specific chat history
   chatLog = Array.isArray(roomData.chatHistory) ? roomData.chatHistory : [];
+  activityLog = [];
   chatUnread = { p: 0, a: 0 };
   renderChat();
 
@@ -1838,6 +1893,7 @@ async function joinRoom() {
   if (!password) return showToast('Enter the password!');
   if (!name) return showToast('Enter your name!');
 
+  showLoading();
   initSocket();
   setupSocketListeners(false);
   socket.emit('participant:join', { roomCode: code, password, name, username: loggedInUser });
@@ -2324,6 +2380,7 @@ async function loadLobby() {
 
 function rejoinFromLobby(roomCode, isHost) {
   showScreen('screen-landing');
+  showLoading();
   initSocket();
   setupSocketListeners(isHost);
   socket.emit('rejoin', {
@@ -2632,6 +2689,7 @@ function enterApp(activeRoom) {
 }
 
 function handleParticipantJoined(data) {
+  hideLoading();
   isCurrentlyArbiter = false;
   currentRoom = data.roomCode;
   myParticipantId = data.participantId;
@@ -2643,6 +2701,7 @@ function handleParticipantJoined(data) {
 
   // Load room-specific chat history
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
+  activityLog = [];
   chatUnread = { p: 0, a: 0 };
   renderChat();
 
@@ -2932,6 +2991,7 @@ async function loadMyParties() {
 
 function rejoinFromMyParties(roomCode, isHost) {
   showScreen('screen-landing');
+  showLoading();
   initSocket();
   setupSocketListeners(isHost);
   socket.emit('rejoin', {
