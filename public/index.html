@@ -993,6 +993,52 @@
       font-family: var(--font-body);
     }
 
+    /* ── SETTINGS ── */
+    .settings-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 16px;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .settings-label { font-size: 14px; font-weight: 600; color: var(--text); }
+    .settings-desc  { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    /* iOS-style toggle */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 46px;
+      height: 27px;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      border-radius: 14px;
+      background: var(--border);
+      transition: background 0.2s;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      left: 3px; top: 3px;
+      width: 21px; height: 21px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .toggle-switch input:checked + .toggle-track { background: var(--accent3); }
+    .toggle-switch input:checked + .toggle-track::after { transform: translateX(19px); }
+
     #loading-overlay {
       display: none;
       position: fixed;
@@ -1144,36 +1190,112 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;">
     <div style="display:flex;flex-direction:column;gap:16px;">
 
-      <!-- Account -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
-        <div class="section-header" style="margin:0 0 12px;">ACCOUNT</div>
-        <div class="info-row">
-          <span>Username</span>
-          <strong id="settings-username" style="color:var(--accent);font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;"></strong>
+      <!-- ── NOTIFICATIONS ── -->
+      <div class="settings-card">
+        <div class="section-header" style="margin:0 0 14px;">NOTIFICATIONS</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Push Notifications</div>
+            <div class="settings-desc">Get notified about game activity</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-notifications" onchange="onNotifToggle(this.checked)">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div id="notif-status-msg" style="font-size:12px;color:var(--muted);margin-top:8px;display:none;"></div>
+      </div>
+
+      <!-- ── GAMEPLAY ── -->
+      <div class="settings-card">
+        <div class="section-header" style="margin:0 0 14px;">GAMEPLAY</div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Auto-Confirm Squares</div>
+            <div class="settings-desc">Mark squares instantly without a popup</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-autoConfirm" onchange="onSettingToggle('autoConfirm', this.checked)">
+            <span class="toggle-track"></span>
+          </label>
+        </div>
+        <div class="settings-row" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <div>
+            <div class="settings-label">Haptic Feedback</div>
+            <div class="settings-desc">Vibration on interactions (mobile)</div>
+          </div>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-haptic" onchange="onSettingToggle('haptic', this.checked)">
+            <span class="toggle-track"></span>
+          </label>
         </div>
       </div>
 
-      <!-- Notifications -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
-        <div class="section-header" style="margin:0 0 12px;">NOTIFICATIONS</div>
-        <div id="settings-notif-content"></div>
+      <!-- ── ACCOUNT ── -->
+      <div class="settings-card">
+        <div class="section-header" style="margin:0 0 14px;">ACCOUNT</div>
+
+        <!-- Username -->
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Username</div>
+            <div id="settings-username" style="font-family:var(--font-display);color:var(--accent);font-size:18px;letter-spacing:0.05em;margin-top:2px;"></div>
+          </div>
+          <button id="change-username-btn" class="btn btn-secondary btn-sm" onclick="toggleSettingsForm('change-username-form')">CHANGE</button>
+        </div>
+        <div id="username-changed-notice" style="display:none;font-size:12px;color:var(--muted);margin-top:4px;">Username can only be changed once — already used.</div>
+        <div id="change-username-form" style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+          <div class="form-group">
+            <label>New Username</label>
+            <input id="change-username-input" type="text" placeholder="Enter new username" autocomplete="off" />
+          </div>
+          <div id="change-username-error" style="color:var(--accent2);font-size:13px;display:none;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" onclick="toggleSettingsForm('change-username-form')">Cancel</button>
+            <button class="btn btn-primary btn-sm" onclick="changeUsername()">SAVE</button>
+          </div>
+        </div>
+
+        <!-- Change password -->
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <button class="btn btn-secondary btn-sm" style="width:100%;" onclick="toggleSettingsForm('change-password-form')">CHANGE PASSWORD</button>
+          <div id="change-password-form" style="display:none;margin-top:12px;">
+            <div class="form-group">
+              <label>Current Password</label>
+              <input id="change-pw-current" type="password" placeholder="Current password" autocomplete="off" />
+            </div>
+            <div class="form-group">
+              <label>New Password</label>
+              <input id="change-pw-new" type="password" placeholder="New password (min 4 chars)" autocomplete="off" />
+            </div>
+            <div id="change-pw-error" style="color:var(--accent2);font-size:13px;display:none;margin-bottom:8px;"></div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="toggleSettingsForm('change-password-form')">Cancel</button>
+              <button class="btn btn-primary btn-sm" onclick="changePassword()">SAVE</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Delete account -->
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+          <button class="btn btn-danger btn-sm" style="width:100%;" onclick="toggleSettingsForm('delete-account-form')">DELETE ACCOUNT</button>
+          <div id="delete-account-form" style="display:none;margin-top:12px;">
+            <p style="font-size:13px;color:var(--accent2);margin-bottom:12px;line-height:1.5;">⚠️ This will permanently delete your account and all data. This cannot be undone.</p>
+            <div class="form-group">
+              <label>Enter your password to confirm</label>
+              <input id="delete-account-pw" type="password" placeholder="Your password" autocomplete="off" />
+            </div>
+            <div id="delete-account-error" style="color:var(--accent2);font-size:13px;display:none;margin-bottom:8px;"></div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="toggleSettingsForm('delete-account-form')">Cancel</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteAccount()">DELETE FOREVER</button>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <!-- About -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 16px;">
-        <div class="section-header" style="margin:0 0 12px;">ABOUT</div>
-        <div class="info-row">
-          <span>App</span>
-          <strong>PIngo</strong>
-        </div>
-        <div class="info-row" style="margin-top:8px;">
-          <span>Version</span>
-          <strong>2.0</strong>
-        </div>
-      </div>
-
-      <!-- Log Out -->
-      <button class="btn btn-danger" onclick="doLogout()" style="margin-top:8px;">LOG OUT</button>
+      <!-- LOG OUT -->
+      <button class="btn btn-danger" onclick="doLogout()" style="margin-top:4px;">LOG OUT</button>
 
     </div>
   </div>
@@ -1958,6 +2080,13 @@ function toggleCell(index, isArbiter) {
     return showToast('Only the host can uncheck cells');
   }
 
+  // Auto-confirm: skip modal and mark immediately
+  if (userSettings.autoConfirm) {
+    haptic();
+    socket.emit('cell:check', { roomCode: currentRoom, cellIndex: index });
+    return;
+  }
+
   pendingCellIndex = index;
   document.getElementById('cell-confirm-text').textContent =
     isChecked ? `Unmark "${promptText}"?` : `Mark "${promptText}" as completed?`;
@@ -1967,6 +2096,7 @@ function toggleCell(index, isArbiter) {
 function confirmCellCheck() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   if (pendingCellIndex !== null && socket && currentRoom) {
+    haptic();
     if (boardViewTargetId) {
       // Host unchecking a cell on another player's board
       socket.emit('host:uncheck', { roomCode: currentRoom, targetId: boardViewTargetId, cellIndex: pendingCellIndex });
@@ -2452,6 +2582,7 @@ async function showPushBannerIfNeeded() {
 async function autoRegisterPush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
   if (Notification.permission !== 'granted') return;
+  if (!userSettings.notifications) return;
   if (!currentRoom) return;
 
   try {
@@ -2682,6 +2813,7 @@ async function doLogout() {
 }
 
 function enterApp(activeRoom) {
+  loadUserSettings(); // fire-and-forget; settings apply before user can interact
   document.getElementById('welcome-user').textContent = 'Logged in as ' + loggedInUser;
   // Pre-fill name fields with username
   document.getElementById('setup-arbiter-name').value = loggedInUser;
@@ -3023,51 +3155,204 @@ function rejoinFromMyParties(roomCode, isHost) {
 }
 
 // ── SETTINGS ──
+// ── USER SETTINGS STATE ──
+let userSettings = { notifications: true, autoConfirm: false, haptic: true, usernameChanged: false };
+
+async function loadUserSettings() {
+  try {
+    const resp = await fetch('/api/user-settings');
+    if (resp.ok) userSettings = await resp.json();
+  } catch {}
+}
+
+async function saveUserSetting(key, value) {
+  userSettings[key] = value;
+  try {
+    await fetch('/api/user-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key]: value })
+    });
+  } catch {}
+}
+
+function haptic(ms = 30) {
+  if (userSettings.haptic && navigator.vibrate) navigator.vibrate(ms);
+}
+
+// ── SETTINGS SCREEN ──
 function openSettings() {
   document.getElementById('settings-username').textContent = loggedInUser || '';
-  refreshNotifStatus();
+
+  // Sync toggle states from current settings
+  document.getElementById('setting-autoConfirm').checked = !!userSettings.autoConfirm;
+  document.getElementById('setting-haptic').checked = !!userSettings.haptic;
+
+  // Notification toggle: on if permission granted AND user preference is on
+  const notifGranted = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+  document.getElementById('setting-notifications').checked = notifGranted && !!userSettings.notifications;
+
+  // Notification status message
+  const msg = document.getElementById('notif-status-msg');
+  if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+    msg.textContent = 'Blocked in browser settings — enable there first.';
+    msg.style.display = 'block';
+    document.getElementById('setting-notifications').disabled = true;
+  } else if (!('PushManager' in window)) {
+    msg.textContent = 'Push notifications not supported in this browser.';
+    msg.style.display = 'block';
+    document.getElementById('setting-notifications').disabled = true;
+  } else {
+    msg.style.display = 'none';
+    document.getElementById('setting-notifications').disabled = false;
+  }
+
+  // Username change: hide CHANGE button if already used
+  const changeBtn = document.getElementById('change-username-btn');
+  const changedNotice = document.getElementById('username-changed-notice');
+  if (userSettings.usernameChanged) {
+    changeBtn.style.display = 'none';
+    changedNotice.style.display = 'block';
+  } else {
+    changeBtn.style.display = '';
+    changedNotice.style.display = 'none';
+  }
+
+  // Collapse all inline forms
+  ['change-username-form', 'change-password-form', 'delete-account-form'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+
   showScreen('screen-settings');
 }
 
-function refreshNotifStatus() {
-  const container = document.getElementById('settings-notif-content');
+function onSettingToggle(key, value) {
+  saveUserSetting(key, value);
+  haptic(20);
+}
 
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    container.innerHTML = '<div style="font-size:13px;color:var(--muted);">Push notifications are not supported in this browser.</div>';
+async function onNotifToggle(checked) {
+  if (!checked) {
+    await saveUserSetting('notifications', false);
     return;
   }
-
+  if (typeof Notification === 'undefined' || !('PushManager' in window)) return;
   if (Notification.permission === 'denied') {
-    container.innerHTML = '<div style="font-size:13px;color:var(--accent2);">Notifications are blocked. Please enable them in your browser settings.</div>';
+    document.getElementById('setting-notifications').checked = false;
+    showToast('Notifications blocked — enable in browser settings');
     return;
   }
-
-  if (Notification.permission === 'granted') {
-    container.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;"></span>
-        <span style="font-size:13px;color:var(--text);">Notifications enabled</span>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px;">You will be notified when players complete tasks in your active game.</div>
-    `;
-    return;
+  if (Notification.permission !== 'granted') {
+    const perm = await Notification.requestPermission().catch(() => 'denied');
+    if (perm !== 'granted') {
+      document.getElementById('setting-notifications').checked = false;
+      showToast('Notification permission denied');
+      return;
+    }
+    showToast('Notifications enabled!');
   }
+  await saveUserSetting('notifications', true);
+  haptic(20);
+  // Re-register push if currently in a party
+  if (currentRoom) autoRegisterPush();
+}
 
-  container.innerHTML = `
-    <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Enable push notifications to stay updated on game activity.</div>
-    <button class="btn btn-primary btn-sm" onclick="requestNotifPermission()">ENABLE NOTIFICATIONS</button>
-  `;
+function toggleSettingsForm(id) {
+  const el = document.getElementById(id);
+  const visible = el.style.display !== 'none';
+  // Close all forms first
+  ['change-username-form', 'change-password-form', 'delete-account-form'].forEach(fid => {
+    document.getElementById(fid).style.display = 'none';
+  });
+  if (!visible) el.style.display = 'block';
+  // Clear errors
+  ['change-username-error', 'change-pw-error', 'delete-account-error'].forEach(eid => {
+    const e = document.getElementById(eid);
+    if (e) { e.style.display = 'none'; e.textContent = ''; }
+  });
+}
+
+async function changeUsername() {
+  const input = document.getElementById('change-username-input');
+  const errEl = document.getElementById('change-username-error');
+  errEl.style.display = 'none';
+  try {
+    const resp = await fetch('/api/change-username', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newUsername: input.value.trim() })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      errEl.textContent = data.error;
+      errEl.style.display = 'block';
+      return;
+    }
+    loggedInUser = data.username;
+    userSettings.usernameChanged = true;
+    document.getElementById('settings-username').textContent = data.username;
+    document.getElementById('welcome-user').textContent = 'Logged in as ' + data.username;
+    document.getElementById('change-username-form').style.display = 'none';
+    document.getElementById('change-username-btn').style.display = 'none';
+    document.getElementById('username-changed-notice').style.display = 'block';
+    input.value = '';
+    showToast('Username updated!');
+  } catch { showToast('Server error'); }
+}
+
+async function changePassword() {
+  const current = document.getElementById('change-pw-current').value;
+  const next = document.getElementById('change-pw-new').value;
+  const errEl = document.getElementById('change-pw-error');
+  errEl.style.display = 'none';
+  try {
+    const resp = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: current, newPassword: next })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      errEl.textContent = data.error;
+      errEl.style.display = 'block';
+      return;
+    }
+    document.getElementById('change-pw-current').value = '';
+    document.getElementById('change-pw-new').value = '';
+    document.getElementById('change-password-form').style.display = 'none';
+    showToast('Password updated!');
+  } catch { showToast('Server error'); }
+}
+
+async function deleteAccount() {
+  const pw = document.getElementById('delete-account-pw').value;
+  const errEl = document.getElementById('delete-account-error');
+  errEl.style.display = 'none';
+  try {
+    const resp = await fetch('/api/delete-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      errEl.textContent = data.error;
+      errEl.style.display = 'block';
+      return;
+    }
+    // Full reset then go to auth
+    if (socket) { socket.disconnect(); socket = null; }
+    activityLog = []; currentRoom = null; loggedInUser = null;
+    showToast('Account deleted');
+    showScreen('screen-auth');
+  } catch { showToast('Server error'); }
 }
 
 async function requestNotifPermission() {
   try {
     const perm = await Notification.requestPermission();
-    if (perm === 'granted') {
-      showToast('Notifications enabled!');
-    } else {
-      showToast('Notification permission denied');
-    }
-    refreshNotifStatus();
+    if (perm === 'granted') showToast('Notifications enabled!');
+    else showToast('Notification permission denied');
   } catch {
     showToast('Could not request notification permission');
   }

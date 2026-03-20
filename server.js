@@ -20,7 +20,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // =======================
 // AUTH - In-memory stores
 // =======================
-const users = {};      // { username: { username, passwordHash, activeRoom: null } }
+const users = {};      // { username: { username, passwordHash, activeRoom, settings, usernameChanged } }
 const sessions = {};   // { sessionToken: username }
 const socketToUser = {}; // { socketId: { username, roomCode } }
 
@@ -49,7 +49,11 @@ app.post('/api/signup', async (req, res) => {
         return res.status(409).json({ error: 'Username already taken' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    users[trimmed] = { username: trimmed, passwordHash, activeRoom: null };
+    users[trimmed] = {
+        username: trimmed, passwordHash, activeRoom: null,
+        usernameChanged: false,
+        settings: { notifications: true, autoConfirm: false, haptic: true }
+    };
 
     const token = crypto.randomUUID();
     sessions[token] = trimmed;
@@ -80,6 +84,105 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/logout', (req, res) => {
     const token = req.cookies?.session;
     if (token) delete sessions[token];
+    res.clearCookie('session');
+    res.json({ success: true });
+});
+
+// ── USER SETTINGS ──
+app.get('/api/user-settings', requireAuth, (req, res) => {
+    const user = users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const s = user.settings || { notifications: true, autoConfirm: false, haptic: true };
+    res.json({ ...s, usernameChanged: user.usernameChanged || false });
+});
+
+app.post('/api/user-settings', requireAuth, (req, res) => {
+    const user = users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!user.settings) user.settings = { notifications: true, autoConfirm: false, haptic: true };
+    const { notifications, autoConfirm, haptic } = req.body;
+    if (typeof notifications === 'boolean') user.settings.notifications = notifications;
+    if (typeof autoConfirm === 'boolean') user.settings.autoConfirm = autoConfirm;
+    if (typeof haptic === 'boolean') user.settings.haptic = haptic;
+    res.json({ success: true });
+});
+
+app.post('/api/change-password', requireAuth, async (req, res) => {
+    const user = users[req.username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'All fields required' });
+    if (newPassword.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
+    const match = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    res.json({ success: true });
+});
+
+app.post('/api/change-username', requireAuth, async (req, res) => {
+    const oldName = req.username;
+    const user = users[oldName];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.usernameChanged) return res.status(400).json({ error: 'Username can only be changed once' });
+    const trimmed = String(req.body.newUsername || '').trim().toLowerCase();
+    if (trimmed.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
+    if (trimmed === oldName) return res.status(400).json({ error: 'That is already your username' });
+    if (users[trimmed]) return res.status(409).json({ error: 'Username already taken' });
+
+    users[trimmed] = { ...user, username: trimmed, usernameChanged: true };
+    delete users[oldName];
+
+    // Update sessions
+    for (const token of Object.keys(sessions)) {
+        if (sessions[token] === oldName) sessions[token] = trimmed;
+    }
+    // Update socket mappings
+    for (const id of Object.keys(socketToUser)) {
+        if (socketToUser[id].username === oldName) socketToUser[id].username = trimmed;
+    }
+    // Update active room references
+    for (const room of Object.values(rooms)) {
+        if (room.arbiter && room.arbiter.username === oldName) {
+            room.arbiter.username = trimmed;
+            room.arbiter.name = trimmed;
+        }
+        if (room.participants[oldName]) {
+            const p = room.participants[oldName];
+            p.name = trimmed;
+            room.participants[trimmed] = p;
+            delete room.participants[oldName];
+        }
+    }
+    res.json({ username: trimmed });
+});
+
+app.post('/api/delete-account', requireAuth, async (req, res) => {
+    const username = req.username;
+    const user = users[username];
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const { password } = req.body;
+    if (!password) return res.status(400).json({ error: 'Password required' });
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) return res.status(401).json({ error: 'Incorrect password' });
+
+    // Remove from active room
+    if (user.activeRoom) {
+        const room = rooms[user.activeRoom.roomCode];
+        if (room) {
+            if (user.activeRoom.isArbiter) {
+                io.to(user.activeRoom.roomCode).emit('kicked', { reason: 'The host deleted their account.' });
+                delete rooms[user.activeRoom.roomCode];
+            } else {
+                delete room.participants[username];
+                io.to(user.activeRoom.roomCode).emit('room:update', { participants: getAllPlayers(room) });
+            }
+        }
+    }
+    // Revoke all sessions
+    for (const token of Object.keys(sessions)) {
+        if (sessions[token] === username) delete sessions[token];
+    }
+    delete users[username];
     res.clearCookie('session');
     res.json({ success: true });
 });
