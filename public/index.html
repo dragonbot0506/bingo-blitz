@@ -476,6 +476,65 @@
       margin-top: 3px;
     }
 
+    /* ── CHAT ── */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      padding: 0;
+    }
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 16px 8px;
+    }
+    .chat-msg {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      animation: slide-in 0.2s ease;
+    }
+    .chat-msg-sender {
+      font-weight: 700;
+      color: var(--accent);
+      font-size: 11px;
+      margin-bottom: 2px;
+    }
+    .chat-msg.mine .chat-msg-sender { color: var(--accent3); }
+    .chat-msg-time { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .chat-input-row input {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 22px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+    }
+    .tab-badge {
+      display: inline-block;
+      background: var(--accent2);
+      color: #fff;
+      border-radius: 8px;
+      font-size: 10px;
+      padding: 0 5px;
+      margin-left: 3px;
+      line-height: 15px;
+      vertical-align: middle;
+    }
+
     /* ── TOAST ── */
     #toast {
       position: fixed;
@@ -837,6 +896,7 @@
 
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
+    .tab-panel.chat-panel.active { display: flex; }
 
     /* ── JOINING SCREEN ── */
     #screen-join {
@@ -1180,6 +1240,7 @@
     <button class="tab active" onclick="switchTab(this,'p-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'p-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'p-tab-feed')">FEED</button>
+    <button id="p-chat-tab-btn" class="tab" onclick="switchTab(this,'p-tab-chat');clearChatBadge('p')">CHAT</button>
     <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="showLeaveConfirm()">LEAVE</button>
   </div>
 
@@ -1218,6 +1279,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Chat Tab — outside scroll wrapper so input stays pinned at bottom -->
+  <div id="p-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="p-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="p-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('p')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('p')" style="flex-shrink:0;">Send</button>
+    </div>
+  </div>
 </div>
 
 <!-- ──────────────────────── ARBITER DASHBOARD ──────────────────────── -->
@@ -1239,6 +1311,7 @@
     <button class="tab active" onclick="switchTab(this,'a-tab-players')">PLAYERS</button>
     <button class="tab" onclick="switchTab(this,'a-tab-card')">MY CARD</button>
     <button class="tab" onclick="switchTab(this,'a-tab-feed')">FEED</button>
+    <button id="a-chat-tab-btn" class="tab" onclick="switchTab(this,'a-tab-chat');clearChatBadge('a')">CHAT</button>
     <button class="tab" onclick="switchTab(this,'a-tab-info')">INFO</button>
     <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showHostActions()">LEAVE</button>
   </div>
@@ -1304,6 +1377,17 @@
           <div id="info-prompts" class="prompt-list"></div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Arbiter Chat Tab — outside scroll wrapper so input stays pinned at bottom -->
+  <div id="a-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="a-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="a-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('a')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('a')" style="flex-shrink:0;">Send</button>
     </div>
   </div>
 </div>
@@ -1527,6 +1611,17 @@ function initSocket() {
     updateArbiterGameControls();
     showStandingsOverlay(data.standings);
   });
+  socket.on('chat:received', (data) => {
+    chatLog.push(data);
+    renderChat();
+    // Show unread badge if chat tab is not currently active
+    ['p', 'a'].forEach(prefix => {
+      const panel = document.getElementById(`${prefix}-tab-chat`);
+      if (panel && !panel.classList.contains('active')) {
+        showChatBadge(prefix);
+      }
+    });
+  });
   socket.on('photo:data', (data) => {
     boardViewPhotos = data.photos || {};
     // Re-apply has-photo class if board is still open
@@ -1571,6 +1666,8 @@ function resetAndGoHome() {
   currentParticipants = [];
   gameState = 'waiting';
   roomProofRequired = new Set();
+  chatLog = [];
+  chatUnread = { p: 0, a: 0 };
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1945,6 +2042,61 @@ function renderFeed(containerId) {
 
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── CHAT ──
+let chatLog = [];
+let chatUnread = { p: 0, a: 0 };
+
+function sendChat(prefix) {
+  const input = document.getElementById(`${prefix}-chat-input`);
+  const msg = input.value.trim();
+  if (!msg || !socket || !currentRoom) return;
+  socket.emit('chat:message', { roomCode: currentRoom, message: msg });
+  input.value = '';
+}
+
+function renderChat() {
+  ['p', 'a'].forEach(prefix => {
+    const el = document.getElementById(`${prefix}-chat-messages`);
+    if (!el) return;
+    if (chatLog.length === 0) {
+      el.innerHTML = '<div class="empty-state">No messages yet. Say hi!</div>';
+      return;
+    }
+    el.innerHTML = chatLog.map(item => {
+      const isMe = item.senderName === loggedInUser;
+      return `
+        <div class="chat-msg ${isMe ? 'mine' : ''}">
+          <div class="chat-msg-sender">${esc(item.senderName)}</div>
+          <div>${esc(item.message)}</div>
+          <div class="chat-msg-time">${formatTime(new Date(item.time))}</div>
+        </div>
+      `;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
+function showChatBadge(prefix) {
+  chatUnread[prefix]++;
+  const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+  if (!btn) return;
+  let badge = btn.querySelector('.tab-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'tab-badge';
+    btn.appendChild(badge);
+  }
+  badge.textContent = chatUnread[prefix];
+}
+
+function clearChatBadge(prefix) {
+  chatUnread[prefix] = 0;
+  const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+  if (!btn) return;
+  const badge = btn.querySelector('.tab-badge');
+  if (badge) badge.remove();
 }
 
 // ── BINGO OVERLAY ──

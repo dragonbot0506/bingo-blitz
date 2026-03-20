@@ -1018,6 +1018,37 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('chat:message', ({ roomCode, message }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+
+            let senderName;
+            if (room.arbiter && room.arbiter.socketId === socket.id) {
+                senderName = room.arbiter.name;
+            } else {
+                const p = room.participants[userInfo.username];
+                if (!p) return;
+                senderName = p.name;
+            }
+
+            if (typeof message !== 'string' || !message.trim()) return;
+            const safeMsg = message.trim().slice(0, 200);
+
+            io.to(code).emit('chat:received', {
+                senderName,
+                message: safeMsg,
+                time: Date.now()
+            });
+        } catch (err) {
+            console.error('chat:message error:', err);
+        }
+    });
+
     socket.on('host:kick', ({ roomCode, participantId }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
