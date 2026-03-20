@@ -1296,7 +1296,7 @@
 <div id="screen-arbiter" class="screen">
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:6px;">
-      <button class="btn btn-ghost" onclick="showHostActions()" style="padding:4px 6px;font-size:16px;">←</button>
+      <button class="btn btn-ghost" onclick="resetAndGoHome()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -2931,6 +2931,7 @@ async function loadMyParties() {
 }
 
 function rejoinFromMyParties(roomCode, isHost) {
+  showScreen('screen-landing');
   initSocket();
   setupSocketListeners(isHost);
   socket.emit('rejoin', {
