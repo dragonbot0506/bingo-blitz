@@ -184,6 +184,67 @@ function sanitizeParticipants(participants) {
         }));
 }
 
+// Transfers host role to the first available participant, or deletes room if none remain.
+function autoTransferHost(room, roomCode, oldHostName) {
+    const nextParticipant = Object.values(room.participants).find(p => !p.kicked);
+
+    if (!nextParticipant) {
+        // No players left — delete the room
+        io.to(roomCode).emit('room:deleted');
+        for (const pId of Object.keys(room.participants)) {
+            if (users[pId]) users[pId].activeRoom = null;
+        }
+        delete rooms[roomCode];
+        return;
+    }
+
+    // Promote nextParticipant to arbiter
+    room.arbiter = {
+        id: nextParticipant.id,
+        name: nextParticipant.name,
+        username: nextParticipant.id,
+        socketId: nextParticipant.socketId,
+        pushSubscription: nextParticipant.pushSubscription,
+        card: nextParticipant.card,
+        checked: nextParticipant.checked,
+        hasBingo: nextParticipant.hasBingo
+    };
+    delete room.participants[nextParticipant.id];
+
+    if (users[nextParticipant.id]) {
+        users[nextParticipant.id].activeRoom = { roomCode, isArbiter: true };
+    }
+    if (nextParticipant.socketId) {
+        socketToUser[nextParticipant.socketId] = { username: nextParticipant.id, roomCode };
+    }
+
+    // Notify the new host to switch to arbiter UI
+    if (nextParticipant.socketId) {
+        const newHostSocket = io.sockets.sockets.get(nextParticipant.socketId);
+        if (newHostSocket) {
+            newHostSocket.emit('role:changed', {
+                newRole: 'arbiter',
+                data: {
+                    roomCode,
+                    gridSize: room.gridSize,
+                    prompts: room.prompts,
+                    partyName: room.partyName,
+                    participants: getAllPlayers(room),
+                    arbiterCard: room.arbiter.card,
+                    arbiterChecked: room.arbiter.checked
+                }
+            });
+        }
+    }
+
+    const msg = oldHostName
+        ? `${oldHostName} left. ${nextParticipant.name} is now the host.`
+        : `${nextParticipant.name} is now the host.`;
+
+    io.to(roomCode).emit('room:update', { participants: getAllPlayers(room) });
+    io.to(roomCode).emit('activity', { message: msg, participantName: nextParticipant.name });
+}
+
 function getAllPlayers(room) {
     const players = sanitizeParticipants(room.participants);
     if (room.arbiter) {
@@ -297,7 +358,8 @@ app.post('/api/rooms', (req, res) => {
                 checked: [],
                 hasBingo: false
             },
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            lastActivity: Date.now()
         };
 
         console.log('ROOM CREATED:', roomCode);
@@ -408,7 +470,9 @@ app.post('/api/leave-room', (req, res) => {
 
     if (room) {
         if (isArbiter) {
+            const oldHostName = room.arbiter?.name;
             room.arbiter = null;
+            autoTransferHost(room, roomCode, oldHostName);
         } else if (room.participants[username]) {
             const name = room.participants[username].name;
             // Keep participant data for state persistence — only clear socket
@@ -528,11 +592,11 @@ io.on('connection', (socket) => {
             // If this user already has a card in this room, rejoin with existing state
             if (room.participants[participantKey]) {
                 const existing = room.participants[participantKey];
-                existing.socketId = socket.id;
-                // Restore kicked players with their full state
+                // Kicked players may not re-enter
                 if (existing.kicked) {
-                    existing.kicked = false;
+                    return socket.emit('error', 'You have been removed from this party');
                 }
+                existing.socketId = socket.id;
                 socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
                 if (username && users[username]) {
@@ -575,6 +639,7 @@ io.on('connection', (socket) => {
                 checked: [...checked],
                 hasBingo: false
             };
+            room.lastActivity = Date.now();
 
             socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
@@ -678,6 +743,7 @@ io.on('connection', (socket) => {
             else checkedSet.add(cellIndex);
 
             participant.checked = [...checkedSet];
+            room.lastActivity = Date.now();
 
             const promptText = participant.card[cellIndex];
             const hadBingo = participant.hasBingo;
@@ -880,6 +946,34 @@ io.on('connection', (socket) => {
         }
     });
 });
+
+// =======================
+// ROOM CLEANUP
+// =======================
+
+const ROOM_IDLE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [code, room] of Object.entries(rooms)) {
+        const age = now - (room.lastActivity || room.createdAt);
+        if (age < ROOM_IDLE_TTL_MS) continue;
+
+        // Only clean up if all sockets are disconnected (no active players)
+        const arbiterOnline = room.arbiter && room.arbiter.socketId;
+        const anyParticipantOnline = Object.values(room.participants).some(p => p.socketId);
+        if (arbiterOnline || anyParticipantOnline) continue;
+
+        console.log(`[cleanup] Deleting idle room ${code} (idle ${Math.round(age / 60000)}m)`);
+        for (const pId of Object.keys(room.participants)) {
+            if (users[pId]) users[pId].activeRoom = null;
+        }
+        if (room.arbiter?.username && users[room.arbiter.username]) {
+            users[room.arbiter.username].activeRoom = null;
+        }
+        delete rooms[code];
+    }
+}, 30 * 60 * 1000); // run every 30 minutes
 
 // =======================
 // START SERVER

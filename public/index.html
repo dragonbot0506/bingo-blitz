@@ -1096,7 +1096,7 @@
 <div id="screen-participant" class="screen">
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:6px;">
-      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <button class="btn btn-ghost" onclick="showLeaveConfirm()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="p-player-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1149,7 +1149,7 @@
 <div id="screen-arbiter" class="screen">
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:6px;">
-      <button class="btn btn-ghost" onclick="goBackToHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <button class="btn btn-ghost" onclick="showHostActions()" style="padding:4px 6px;font-size:16px;">←</button>
       <span class="status-dot"></span>
       <span id="a-arbiter-name" style="font-weight:700;font-size:15px;"></span>
     </div>
@@ -1353,6 +1353,15 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
+function esc(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function showToast(msg, duration = 3000) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1471,7 +1480,7 @@ function renderPromptList() {
   list.innerHTML = prompts.map((p, i) => `
     <div class="prompt-item">
       <span class="prompt-num">${i+1}</span>
-      <span>${p}</span>
+      <span>${esc(p)}</span>
       <button class="prompt-del" onclick="removePrompt(${i})">✕</button>
     </div>
   `).join('');
@@ -1535,7 +1544,7 @@ function setupArbiterDashboard(name, roomData) {
 
   // Info prompts
   document.getElementById('info-prompts').innerHTML = roomData.prompts.map((p, i) =>
-    `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${p}</span></div>`
+    `<div class="prompt-item"><span class="prompt-num">${i+1}</span><span>${esc(p)}</span></div>`
   ).join('');
 
   // participants is now an array from getAllPlayers (includes host)
@@ -1589,7 +1598,7 @@ function renderBingoGrid(gridId, card, checked, size, isArbiter) {
     const isFree = text === 'FREE';
     const isChecked = checked.has(i);
     const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}"><span class="bingo-cell-text">${text}</span></div>`;
+    return `<div class="${classes}" data-index="${i}" data-arbiter="${isArbiter}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
 
   // Use pointer events for reliable mobile tap handling
@@ -1655,11 +1664,11 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     const isMe = p.id === loggedInUser;
     const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
     const kickBtn = isArbiterView && !p.isHost && !isMe
-      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer('${p.id}')">KICK</button>`
+      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer(${JSON.stringify(p.id)})">KICK</button>`
       : '';
     return `
-      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard('${p.id}')">
-        <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${p.name}</div>
+      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard(${JSON.stringify(p.id)})">
+        <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${esc(p.name)}</div>
         ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
@@ -1688,7 +1697,7 @@ function renderFeed(containerId) {
   }
   el.innerHTML = activityLog.slice(0, 50).map(item => `
     <div class="activity-item ${item.isBingo ? 'bingo-event' : ''}">
-      ${item.message}
+      ${esc(item.message)}
       <div class="activity-time">${formatTime(item.time)}</div>
     </div>
   `).join('');
@@ -1774,10 +1783,10 @@ async function loadLobby() {
       const safePartyName = (r.partyName || '').replace(/'/g, "\\'");
       if (alreadyJoined) {
         return `
-          <div class="lobby-card already-joined" onclick="rejoinFromLobby('${r.roomCode}', ${isHost})">
+          <div class="lobby-card already-joined" onclick="rejoinFromLobby(${JSON.stringify(r.roomCode)}, ${isHost})">
             <div>
-              <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-              <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+              <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
+              <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
               <div class="already-joined-badge">ALREADY JOINED</div>
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
@@ -1788,10 +1797,10 @@ async function loadLobby() {
         `;
       }
       return `
-        <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${safePartyName}')">
+        <div class="lobby-card" onclick="promptLobbyJoin(${JSON.stringify(r.roomCode)}, ${JSON.stringify(r.partyName || '')})">
           <div>
-            <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-            <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+            <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
+            <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
           </div>
           <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
         </div>
@@ -2193,8 +2202,8 @@ function showTransferModal() {
     list.innerHTML = '<div class="empty-state">No other players to transfer to.</div>';
   } else {
     list.innerHTML = nonHostPlayers.map(p => `
-      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer('${p.id}', '${p.name}')">
-        ${p.name}
+      <button class="btn btn-secondary btn-sm" style="text-align:left;" onclick="confirmTransfer(${JSON.stringify(p.id)}, ${JSON.stringify(p.name)})">
+        ${esc(p.name)}
       </button>
     `).join('');
   }
@@ -2294,7 +2303,7 @@ function viewPlayerBoard(playerId) {
     const isFree = text === 'FREE';
     const isChecked = checkedSet.has(i);
     const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
-    return `<div class="${classes}"><span class="bingo-cell-text">${text}</span></div>`;
+    return `<div class="${classes}"><span class="bingo-cell-text">${esc(text)}</span></div>`;
   }).join('');
   // No pointer event handlers — grid has readonly class
 
@@ -2330,10 +2339,10 @@ async function loadMyParties() {
         ? '<span style="font-size:11px;font-weight:700;color:var(--accent3);letter-spacing:0.05em;background:rgba(71,212,255,0.1);padding:2px 8px;border-radius:6px;">[HOST]</span>'
         : '<span style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.05em;background:rgba(232,255,71,0.1);padding:2px 8px;border-radius:6px;">[PLAYER]</span>';
       return `
-        <div class="lobby-card" onclick="rejoinFromMyParties('${r.roomCode}', ${r.role === 'host'})">
+        <div class="lobby-card" onclick="rejoinFromMyParties(${JSON.stringify(r.roomCode)}, ${r.role === 'host'})">
           <div>
-            <div class="lobby-card-name">${r.partyName}</div>
-            <div class="lobby-card-info">${roleBadge} Hosted by ${r.hostName}</div>
+            <div class="lobby-card-name">${esc(r.partyName)}</div>
+            <div class="lobby-card-info">${roleBadge} Hosted by ${esc(r.hostName)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
             <div class="lobby-card-players">${r.playerCount} player${r.playerCount !== 1 ? 's' : ''}</div>
