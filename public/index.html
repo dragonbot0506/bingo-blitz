@@ -2655,6 +2655,26 @@ async function doLogin() {
 }
 
 async function doLogout() {
+  // Disconnect socket and wipe all party state so the next user
+  // on this session doesn't inherit a socket still subscribed to
+  // the previous user's party room.
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+  activityLog = [];
+  currentRoom = null;
+  myParticipantId = null;
+  myCard = [];
+  myChecked = new Set();
+  arbiterCard = [];
+  arbiterChecked = new Set();
+  isCurrentlyArbiter = false;
+  currentParticipants = [];
+  gameState = 'waiting';
+  roomProofRequired = new Set();
+  chatLog = [];
+  chatUnread = { p: 0, a: 0 };
   await fetch('/api/logout', { method: 'POST' });
   loggedInUser = null;
   showScreen('screen-auth');
