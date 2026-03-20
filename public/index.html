@@ -1121,6 +1121,12 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <!-- Card Tab -->
     <div id="p-tab-card" class="tab-panel active" style="padding:12px 8px 24px;">
+      <div id="p-waiting-banner" style="display:none;text-align:center;padding:12px 16px 8px;">
+        <div style="font-family:var(--font-display);font-size:18px;color:var(--muted);letter-spacing:0.1em;">
+          <span class="status-dot" style="background:var(--muted);"></span>WAITING FOR HOST TO START
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px;">Your card is ready. Sit tight!</div>
+      </div>
       <div class="bingo-wrapper">
         <div id="p-bingo-header" class="bingo-header"></div>
         <div id="p-bingo-grid" class="bingo-grid"></div>
@@ -1175,6 +1181,7 @@
   <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
     <!-- Players Tab -->
     <div id="a-tab-players" class="tab-panel active" style="padding:16px;">
+      <div id="a-game-controls" style="margin-bottom:16px;"></div>
       <div class="section-header">PLAYERS (<span id="a-player-count">0</span>)</div>
       <div id="a-participants" class="participant-grid">
         <div class="empty-state">Share the room code — waiting for players to join!</div>
@@ -1234,9 +1241,21 @@
 
 <!-- ──────────────────────── BINGO OVERLAY ──────────────────────── -->
 <div id="bingo-overlay">
+  <div id="bingo-place-emoji" style="font-size:clamp(40px,12vw,64px);line-height:1;"></div>
   <div class="bingo-big-text">PIngo!</div>
   <div class="bingo-overlay-name" id="bingo-overlay-name"></div>
   <button class="btn btn-secondary" onclick="closeBingoOverlay()" style="margin-top:16px;">Dismiss</button>
+</div>
+
+<!-- ──────────────────────── STANDINGS OVERLAY ──────────────────────── -->
+<div id="standings-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:510;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;">
+  <div style="font-family:var(--font-display);font-size:clamp(48px,15vw,80px);color:var(--accent);text-shadow:0 0 40px rgba(232,255,71,0.3);letter-spacing:0.05em;">GAME OVER</div>
+  <div id="standings-list" style="width:100%;max-width:400px;display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow-y:auto;"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:8px;">
+    <button id="standings-play-again" class="btn btn-primary" onclick="hostPlayAgain()" style="display:none;">🎲 PLAY AGAIN</button>
+    <button class="btn btn-secondary" onclick="closeStandingsAndLeave()">LEAVE PARTY</button>
+    <button class="btn btn-ghost" onclick="closeStandingsOverlay()">Stay &amp; Watch</button>
+  </div>
 </div>
 
 <!-- ──────────────────────── CONFIRM MODAL (LEAVE) ──────────────────────── -->
@@ -1346,6 +1365,7 @@ let arbiterCard = [];
 let arbiterChecked = new Set();
 let isCurrentlyArbiter = false;
 let currentParticipants = [];
+let gameState = 'waiting'; // 'waiting' | 'active' | 'ended'
 
 // ── UTILS ──
 function showScreen(id) {
@@ -1397,10 +1417,21 @@ function initSocket() {
   });
   socket.on('bingo', (data) => {
     addActivity(data.message, true);
-    showBingoOverlay(data.participantName);
+    showBingoOverlay(data.participantName, data.place, data.placeEmoji);
   });
   socket.on('room:update', (data) => {
     updateParticipantDisplays(data.participants);
+  });
+  socket.on('game:started', (data) => {
+    gameState = data.state || 'active';
+    updateWaitingBanner();
+    updateArbiterGameControls();
+    showToast('Game started! Good luck!');
+  });
+  socket.on('game:over', (data) => {
+    gameState = 'ended';
+    updateArbiterGameControls();
+    showStandingsOverlay(data.standings);
   });
   socket.on('kicked', () => {
     showToast('You have been kicked from the party');
@@ -1433,6 +1464,7 @@ function resetAndGoHome() {
   arbiterChecked = new Set();
   isCurrentlyArbiter = false;
   currentParticipants = [];
+  gameState = 'waiting';
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1528,6 +1560,7 @@ async function createRoom() {
 
 function setupArbiterDashboard(name, roomData) {
   isCurrentlyArbiter = true;
+  gameState = roomData.gameState || 'waiting';
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
   document.getElementById('a-party-name').textContent = roomData.partyName || '';
@@ -1552,6 +1585,16 @@ function setupArbiterDashboard(name, roomData) {
     ? roomData.participants
     : Object.values(roomData.participants || {});
   updateParticipantDisplays(players);
+  updateArbiterGameControls();
+
+  socket.off('card:reset');
+  socket.on('card:reset', (data) => {
+    arbiterCard = data.card;
+    arbiterChecked = new Set(data.checked);
+    gridSize = data.gridSize;
+    renderBingoHeader('a-bingo-header', gridSize);
+    renderBingoGrid('a-bingo-grid', arbiterCard, arbiterChecked, gridSize, true);
+  });
 
   showPushBannerIfNeeded();
 
@@ -1614,6 +1657,7 @@ let pendingCellIndex = null;
 
 function toggleCell(index, isArbiter) {
   if (!socket || !currentRoom) return;
+  if (gameState !== 'active') return showToast('Waiting for the host to start the game.');
   const card = isArbiter ? arbiterCard : myCard;
   const checked = isArbiter ? arbiterChecked : myChecked;
   const promptText = card[index] || '';
@@ -1666,10 +1710,14 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     const kickBtn = isArbiterView && !p.isHost && !isMe
       ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer(${JSON.stringify(p.id)})">KICK</button>`
       : '';
+    const placeEmojis = ['🥇','🥈','🥉'];
+    const placeLabel = p.place
+      ? (placeEmojis[p.place - 1] || `${p.place}th`) + ' Place'
+      : null;
     return `
       <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard(${JSON.stringify(p.id)})">
         <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${esc(p.name)}</div>
-        ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
+        ${p.hasBingo ? `<div class="bingo-tag">${placeLabel ? placeLabel : '🎉 PIngo!'}</div>` : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
@@ -1708,8 +1756,9 @@ function formatTime(date) {
 }
 
 // ── BINGO OVERLAY ──
-function showBingoOverlay(name) {
-  document.getElementById('bingo-overlay-name').textContent = name + ' got PIngo!';
+function showBingoOverlay(name, place, placeEmoji) {
+  document.getElementById('bingo-place-emoji').textContent = placeEmoji || '';
+  document.getElementById('bingo-overlay-name').textContent = name + ' got PIngo!' + (place ? ` (${placeEmoji || place} Place)` : '');
   document.getElementById('bingo-overlay').classList.add('show');
   spawnConfetti();
   setTimeout(closeBingoOverlay, 4000);
@@ -1717,6 +1766,80 @@ function showBingoOverlay(name) {
 
 function closeBingoOverlay() {
   document.getElementById('bingo-overlay').classList.remove('show');
+}
+
+// ── GAME STATE CONTROLS ──
+function updateWaitingBanner() {
+  const banner = document.getElementById('p-waiting-banner');
+  if (banner) banner.style.display = (gameState === 'waiting') ? 'block' : 'none';
+}
+
+function updateArbiterGameControls() {
+  const el = document.getElementById('a-game-controls');
+  if (!el) return;
+  if (gameState === 'waiting') {
+    el.innerHTML = `<button class="btn btn-primary" onclick="hostStartGame()" style="width:100%;font-size:20px;">🎲 START GAME</button>`;
+  } else if (gameState === 'active') {
+    el.innerHTML = `<button class="btn btn-danger btn-sm" onclick="hostEndGame()" style="width:100%;">END GAME</button>`;
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+function hostStartGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:start', { roomCode: currentRoom });
+}
+
+function hostEndGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:end', { roomCode: currentRoom });
+}
+
+function hostPlayAgain() {
+  if (!socket || !currentRoom) return;
+  closeStandingsOverlay();
+  socket.emit('game:reset', { roomCode: currentRoom });
+}
+
+// ── STANDINGS OVERLAY ──
+const PLACE_LABELS = ['🥇 1st', '🥈 2nd', '🥉 3rd', '4th', '5th', '6th', '7th', '8th'];
+
+function showStandingsOverlay(standings) {
+  spawnConfetti();
+  const list = document.getElementById('standings-list');
+  list.innerHTML = standings.map((p, i) => {
+    const placeLabel = p.place ? (PLACE_LABELS[p.place - 1] || `${p.place}th`) : '—';
+    const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
+    const effectiveTotal = gridSize * gridSize - freeOffset;
+    const effectiveChecked = Math.max(0, (p.checkedCount || 0) - freeOffset);
+    const highlight = p.place === 1 ? 'border-color:var(--accent);background:rgba(232,255,71,0.06);' : '';
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;${highlight}">
+        <div>
+          <span style="font-family:var(--font-display);font-size:18px;color:var(--accent);">${placeLabel}</span>
+          ${p.hasBingo ? '<span style="font-size:12px;color:var(--bingo);margin-left:6px;">PIngo!</span>' : ''}
+          <div style="font-size:14px;font-weight:700;margin-top:2px;">${esc(p.name)}</div>
+        </div>
+        <div style="font-size:13px;color:var(--muted);text-align:right;">${effectiveChecked}/${effectiveTotal} done</div>
+      </div>
+    `;
+  }).join('');
+
+  const playAgainBtn = document.getElementById('standings-play-again');
+  if (playAgainBtn) playAgainBtn.style.display = isCurrentlyArbiter ? 'block' : 'none';
+
+  document.getElementById('standings-overlay').style.display = 'flex';
+}
+
+function closeStandingsOverlay() {
+  document.getElementById('standings-overlay').style.display = 'none';
+}
+
+function closeStandingsAndLeave() {
+  closeStandingsOverlay();
+  if (isCurrentlyArbiter) showHostActions();
+  else showLeaveConfirm();
 }
 
 function spawnConfetti() {
@@ -2127,6 +2250,7 @@ function handleParticipantJoined(data) {
   myCard = data.card;
   myChecked = new Set(data.checked);
   gridSize = data.gridSize;
+  gameState = data.gameState || 'waiting';
 
   document.getElementById('p-player-name').textContent = loggedInUser;
   document.getElementById('p-room-code').textContent = data.roomCode;
@@ -2134,6 +2258,7 @@ function handleParticipantJoined(data) {
 
   renderBingoHeader('p-bingo-header', gridSize);
   renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
+  updateWaitingBanner();
 
   showPushBannerIfNeeded();
 
@@ -2142,6 +2267,15 @@ function handleParticipantJoined(data) {
     myChecked = new Set(upd.checked);
     renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
     if (upd.hasBingo) showToast('🎉 PIngo! You did it!');
+  });
+
+  socket.off('card:reset');
+  socket.on('card:reset', (data) => {
+    myCard = data.card;
+    myChecked = new Set(data.checked);
+    gridSize = data.gridSize;
+    renderBingoHeader('p-bingo-header', gridSize);
+    renderBingoGrid('p-bingo-grid', myCard, myChecked, gridSize, false);
   });
 
   showScreen('screen-participant');

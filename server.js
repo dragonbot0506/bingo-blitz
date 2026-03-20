@@ -180,7 +180,8 @@ function sanitizeParticipants(participants) {
             name: p.name,
             checked: p.checked,
             card: p.card,
-            hasBingo: p.hasBingo
+            hasBingo: p.hasBingo,
+            place: p.place || null
         }));
 }
 
@@ -231,7 +232,8 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     partyName: room.partyName,
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
-                    arbiterChecked: room.arbiter.checked
+                    arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
                 }
             });
         }
@@ -254,6 +256,7 @@ function getAllPlayers(room) {
             checked: room.arbiter.checked || [],
             card: room.arbiter.card || [],
             hasBingo: room.arbiter.hasBingo || false,
+            place: room.arbiter.place || null,
             isHost: true
         });
     }
@@ -356,8 +359,11 @@ app.post('/api/rooms', (req, res) => {
                 pushSubscription: null,
                 card: null,
                 checked: [],
-                hasBingo: false
+                hasBingo: false,
+                place: null
             },
+            state: 'waiting',
+            placementCounter: 0,
             createdAt: Date.now(),
             lastActivity: Date.now()
         };
@@ -571,7 +577,8 @@ io.on('connection', (socket) => {
                 partyName: room.partyName,
                 participants: getAllPlayers(room),
                 arbiterCard: room.arbiter.card,
-                arbiterChecked: room.arbiter.checked
+                arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -588,6 +595,12 @@ io.on('connection', (socket) => {
             if (room.password !== password) return socket.emit('error', 'Wrong password');
 
             const participantKey = username || socket.id;
+
+            // Block brand-new joins once game has started (existing participants can still rejoin)
+            if (room.state !== 'waiting' && !room.participants[participantKey] &&
+                !(room.arbiter && room.arbiter.username === participantKey)) {
+                return socket.emit('error', 'Game already started. Ask the host to let you in next round.');
+            }
 
             // If this user already has a card in this room, rejoin with existing state
             if (room.participants[participantKey]) {
@@ -610,7 +623,8 @@ io.on('connection', (socket) => {
                     checked: existing.checked,
                     gridSize: room.gridSize,
                     roomCode: code,
-                    partyName: room.partyName
+                    partyName: room.partyName,
+                    gameState: room.state || 'waiting'
                 });
 
                 io.to(code).emit('room:update', {
@@ -637,7 +651,8 @@ io.on('connection', (socket) => {
                 pushSubscription: null,
                 card,
                 checked: [...checked],
-                hasBingo: false
+                hasBingo: false,
+                place: null
             };
             room.lastActivity = Date.now();
 
@@ -655,7 +670,8 @@ io.on('connection', (socket) => {
                 checked: [...checked],
                 gridSize: room.gridSize,
                 roomCode: code,
-                partyName: room.partyName
+                partyName: room.partyName,
+                gameState: room.state || 'waiting'
             });
 
             io.to(code).emit('room:update', {
@@ -685,7 +701,8 @@ io.on('connection', (socket) => {
                     partyName: room.partyName,
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
-                    arbiterChecked: room.arbiter.checked
+                    arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
                 });
             } else {
                 const participant = room.participants[username];
@@ -699,7 +716,8 @@ io.on('connection', (socket) => {
                     checked: participant.checked,
                     gridSize: room.gridSize,
                     roomCode: code,
-                    partyName: room.partyName
+                    partyName: room.partyName,
+                    gameState: room.state || 'waiting'
                 });
 
                 io.to(code).emit('room:update', {
@@ -767,11 +785,17 @@ io.on('connection', (socket) => {
             }
 
             if (!hadBingo && participant.hasBingo) {
-                const bingoMsg = `${participant.name} got PIngo!`;
+                room.placementCounter = (room.placementCounter || 0) + 1;
+                participant.place = room.placementCounter;
+
+                const placeEmoji = ['🥇','🥈','🥉'][participant.place - 1] || (participant.place + 'th');
+                const bingoMsg = `${placeEmoji} ${participant.name} got PIngo!`;
 
                 io.to(code).emit('bingo', {
                     participantName: participant.name,
-                    message: bingoMsg
+                    message: bingoMsg,
+                    place: participant.place,
+                    placeEmoji
                 });
 
                 sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
@@ -783,6 +807,114 @@ io.on('connection', (socket) => {
             });
         } catch (err) {
             console.error('cell:check error:', err);
+        }
+    });
+
+    socket.on('game:start', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can start the game');
+            }
+            if (room.state !== 'waiting') return;
+
+            room.state = 'active';
+            io.to(code).emit('game:started', { state: 'active' });
+            io.to(code).emit('activity', { message: 'The game has started! Good luck everyone!' });
+        } catch (err) {
+            console.error('game:start error:', err);
+        }
+    });
+
+    socket.on('game:end', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can end the game');
+            }
+            if (room.state === 'ended') return;
+
+            room.state = 'ended';
+
+            const standings = getAllPlayers(room)
+                .map(p => ({ name: p.name, place: p.place, checkedCount: p.checked.length, hasBingo: p.hasBingo }))
+                .sort((a, b) => (a.place || 999) - (b.place || 999));
+
+            io.to(code).emit('game:over', { standings });
+            io.to(code).emit('activity', { message: 'The host has ended the game.' });
+        } catch (err) {
+            console.error('game:end error:', err);
+        }
+    });
+
+    socket.on('game:reset', ({ roomCode }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room) return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can restart the game');
+            }
+
+            room.state = 'active';
+            room.placementCounter = 0;
+
+            const totalCells = room.gridSize * room.gridSize;
+            const centerIdx = Math.floor(totalCells / 2);
+            const freeChecked = room.gridSize % 2 === 1 ? [centerIdx] : [];
+
+            // Reset and reshuffle each participant
+            for (const p of Object.values(room.participants)) {
+                if (p.kicked) continue;
+                const shuffled = shuffleArray(room.prompts).slice(0, totalCells);
+                if (room.gridSize % 2 === 1) shuffled[centerIdx] = 'FREE';
+                p.card = shuffled;
+                p.checked = [...freeChecked];
+                p.hasBingo = false;
+                p.place = null;
+                // Send new card to the player's socket
+                if (p.socketId) {
+                    const pSocket = io.sockets.sockets.get(p.socketId);
+                    if (pSocket) {
+                        pSocket.emit('card:reset', {
+                            card: p.card,
+                            checked: p.checked,
+                            gridSize: room.gridSize
+                        });
+                    }
+                }
+            }
+
+            // Reset arbiter card too
+            if (room.arbiter) {
+                const shuffled = shuffleArray(room.prompts).slice(0, totalCells);
+                if (room.gridSize % 2 === 1) shuffled[centerIdx] = 'FREE';
+                room.arbiter.card = shuffled;
+                room.arbiter.checked = [...freeChecked];
+                room.arbiter.hasBingo = false;
+                room.arbiter.place = null;
+                if (room.arbiter.socketId) {
+                    const aSocket = io.sockets.sockets.get(room.arbiter.socketId);
+                    if (aSocket) {
+                        aSocket.emit('card:reset', {
+                            card: room.arbiter.card,
+                            checked: room.arbiter.checked,
+                            gridSize: room.gridSize
+                        });
+                    }
+                }
+            }
+
+            room.lastActivity = Date.now();
+            io.to(code).emit('game:started', { state: 'active' });
+            io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            io.to(code).emit('activity', { message: 'New round started! Cards reshuffled.' });
+        } catch (err) {
+            console.error('game:reset error:', err);
         }
     });
 
@@ -911,7 +1043,8 @@ io.on('connection', (socket) => {
                             partyName: room.partyName,
                             participants: getAllPlayers(room),
                             arbiterCard: room.arbiter.card,
-                            arbiterChecked: room.arbiter.checked
+                            arbiterChecked: room.arbiter.checked,
+                    gameState: room.state || 'waiting'
                         }
                     });
                 }
