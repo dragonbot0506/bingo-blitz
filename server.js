@@ -310,13 +310,27 @@ app.post('/api/rooms', (req, res) => {
 });
 
 app.get('/api/rooms', (req, res) => {
-    const list = Object.entries(rooms).map(([code, room]) => ({
-        roomCode: code,
-        partyName: room.partyName || 'Unnamed Party',
-        participantCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
-        gridSize: room.gridSize,
-        hostName: room.arbiter?.name || 'Unknown'
-    }));
+    const token = req.cookies?.session;
+    const username = (token && sessions[token]) ? sessions[token] : null;
+
+    const list = Object.entries(rooms).map(([code, room]) => {
+        let userStatus = 'none';
+        if (username) {
+            if (room.arbiter && room.arbiter.username === username) {
+                userStatus = 'host';
+            } else if (room.participants[username] && !room.participants[username].kicked) {
+                userStatus = 'member';
+            }
+        }
+        return {
+            roomCode: code,
+            partyName: room.partyName || 'Unnamed Party',
+            participantCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
+            gridSize: room.gridSize,
+            hostName: room.arbiter?.name || 'Unknown',
+            userStatus
+        };
+    });
     res.json(list);
 });
 

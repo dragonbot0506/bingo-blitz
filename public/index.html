@@ -574,6 +574,82 @@
       white-space: nowrap;
     }
 
+    .lobby-card.already-joined {
+      border-color: var(--accent3);
+      background: rgba(71, 212, 255, 0.05);
+    }
+
+    .already-joined-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent3);
+      background: rgba(71, 212, 255, 0.12);
+      padding: 2px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.06em;
+      margin-top: 4px;
+    }
+
+    /* ── PARTICIPANT CARD CLICKABLE ── */
+    .participant-card {
+      cursor: pointer;
+    }
+    .participant-card:hover {
+      border-color: var(--muted);
+    }
+
+    /* ── PLAYER BOARD MODAL ── */
+    #player-board-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 700;
+      flex-direction: column;
+    }
+    #player-board-modal.show { display: flex; }
+
+    .player-board-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+    }
+
+    .player-board-name {
+      font-family: var(--font-display);
+      font-size: 22px;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+    }
+
+    .player-board-stat {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .player-board-content {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 12px 8px 24px;
+    }
+
+    /* Read-only bingo grid — disable interaction */
+    .bingo-grid.readonly .bingo-cell {
+      cursor: default !important;
+      touch-action: none !important;
+    }
+    .bingo-grid.readonly .bingo-cell:active {
+      transform: none !important;
+    }
+
     /* ── CONFIRM MODAL ── */
     #confirm-modal {
       display: none;
@@ -1234,6 +1310,23 @@
   </div>
 </div>
 
+<!-- ──────────────────────── PLAYER BOARD MODAL ──────────────────────── -->
+<div id="player-board-modal">
+  <div class="player-board-header">
+    <div>
+      <div class="player-board-name" id="player-board-name"></div>
+      <div class="player-board-stat" id="player-board-stat"></div>
+    </div>
+    <button class="btn btn-ghost" onclick="closePlayerBoardModal()">✕ Close</button>
+  </div>
+  <div class="player-board-content">
+    <div class="bingo-wrapper">
+      <div id="player-board-bingo-header" class="bingo-header"></div>
+      <div id="player-board-bingo-grid" class="bingo-grid readonly"></div>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── TOAST ──────────────────────── -->
 <div id="toast"></div>
 
@@ -1552,21 +1645,26 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
     el.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No players yet...</div>';
     return;
   }
+  // Exclude FREE cell (pre-checked center of odd-size grids) from progress count
+  const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
+  const effectiveTotal = total - freeOffset;
+
   el.innerHTML = participants.map(p => {
-    const pct = Math.round((p.checked.length / total) * 100);
+    const effectiveChecked = Math.max(0, p.checked.length - freeOffset);
+    const pct = effectiveTotal > 0 ? Math.round((effectiveChecked / effectiveTotal) * 100) : 0;
     const isMe = p.id === loggedInUser;
     const hostTag = p.isHost ? '<span style="font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:0.05em;">[HOST]</span> ' : '';
     const kickBtn = isArbiterView && !p.isHost && !isMe
-      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="kickPlayer('${p.id}')">KICK</button>`
+      ? `<button class="btn btn-ghost" style="color:var(--accent2);font-size:11px;padding:2px 8px;margin-top:2px;" onclick="event.stopPropagation(); kickPlayer('${p.id}')">KICK</button>`
       : '';
     return `
-      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}">
+      <div class="participant-card ${p.hasBingo ? 'has-bingo' : ''}" onclick="viewPlayerBoard('${p.id}')">
         <div class="participant-name">${isMe ? '⭐ ' : ''}${hostTag}${p.name}</div>
         ${p.hasBingo ? '<div class="bingo-tag">🎉 PIngo!</div>' : `
           <div class="participant-progress">
             <div class="participant-progress-bar" style="width:${pct}%"></div>
           </div>
-          <div class="participant-stat">${p.checked.length}/${total} checked</div>
+          <div class="participant-stat">${effectiveChecked}/${effectiveTotal} checked</div>
         `}
         ${kickBtn}
       </div>
@@ -1670,18 +1768,49 @@ async function loadLobby() {
       list.innerHTML = '<div class="empty-state">No active parties right now.</div>';
       return;
     }
-    list.innerHTML = rooms.map(r => `
-      <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${(r.partyName || '').replace(/'/g, "\\'")}')">
-        <div>
-          <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
-          <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+    list.innerHTML = rooms.map(r => {
+      const alreadyJoined = r.userStatus === 'host' || r.userStatus === 'member';
+      const isHost = r.userStatus === 'host';
+      const safePartyName = (r.partyName || '').replace(/'/g, "\\'");
+      if (alreadyJoined) {
+        return `
+          <div class="lobby-card already-joined" onclick="rejoinFromLobby('${r.roomCode}', ${isHost})">
+            <div>
+              <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
+              <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+              <div class="already-joined-badge">ALREADY JOINED</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
+              <span style="font-size:11px;color:var(--accent3);font-weight:700;">REJOIN →</span>
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="lobby-card" onclick="promptLobbyJoin('${r.roomCode}', '${safePartyName}')">
+          <div>
+            <div class="lobby-card-name">${r.partyName || 'Unnamed Party'}</div>
+            <div class="lobby-card-info">Hosted by ${r.hostName}</div>
+          </div>
+          <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
         </div>
-        <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   } catch {
     list.innerHTML = '<div class="empty-state">Failed to load parties.</div>';
   }
+}
+
+function rejoinFromLobby(roomCode, isHost) {
+  showScreen('screen-landing');
+  initSocket();
+  setupSocketListeners(isHost);
+  socket.emit('rejoin', {
+    roomCode,
+    username: loggedInUser,
+    isArbiter: isHost
+  });
 }
 
 function promptLobbyJoin(roomCode, partyName) {
@@ -2139,6 +2268,41 @@ function confirmKick() {
 function cancelKick() {
   document.getElementById('kick-confirm-modal').style.display = 'none';
   pendingKickPlayerId = null;
+}
+
+// ── PLAYER BOARD VIEW ──
+function viewPlayerBoard(playerId) {
+  const player = currentParticipants.find(p => p.id === playerId);
+  if (!player || !player.card || player.card.length === 0) return;
+
+  const freeOffset = (gridSize % 2 === 1) ? 1 : 0;
+  const effectiveTotal = gridSize * gridSize - freeOffset;
+  const effectiveChecked = Math.max(0, player.checked.length - freeOffset);
+
+  const nameLabel = player.name + (player.isHost ? ' [HOST]' : '');
+  document.getElementById('player-board-name').textContent = nameLabel;
+  document.getElementById('player-board-stat').textContent = player.hasBingo
+    ? '🎉 PIngo!'
+    : `${effectiveChecked}/${effectiveTotal} completed`;
+
+  renderBingoHeader('player-board-bingo-header', gridSize);
+
+  const grid = document.getElementById('player-board-bingo-grid');
+  grid.style.gridTemplateColumns = `repeat(${gridSize}, 1fr)`;
+  const checkedSet = new Set(player.checked);
+  grid.innerHTML = player.card.map((text, i) => {
+    const isFree = text === 'FREE';
+    const isChecked = checkedSet.has(i);
+    const classes = ['bingo-cell', isFree ? 'free' : '', isChecked ? 'checked' : ''].filter(Boolean).join(' ');
+    return `<div class="${classes}"><span class="bingo-cell-text">${text}</span></div>`;
+  }).join('');
+  // No pointer event handlers — grid has readonly class
+
+  document.getElementById('player-board-modal').classList.add('show');
+}
+
+function closePlayerBoardModal() {
+  document.getElementById('player-board-modal').classList.remove('show');
 }
 
 // ── MY PARTIES ──
