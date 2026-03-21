@@ -1067,6 +1067,170 @@
       letter-spacing: 0.1em;
     }
 
+    /* ── GAME MODE SELECTOR ── */
+    .mode-select-btn {
+      flex: 1;
+      padding: 10px 8px;
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--muted);
+      font-family: var(--font-display);
+      font-size: 15px;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mode-select-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(232,255,71,0.07);
+    }
+
+    /* ── ACTIVITY BUILDER ── */
+    .activity-builder-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .activity-builder-options {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* ── POINTS ACTIVITY LIST ── */
+    .points-activity-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .activity-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .activity-card.done {
+      border-color: var(--accent);
+      background: rgba(232,255,71,0.05);
+    }
+    .activity-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .activity-card-desc {
+      font-size: 14px;
+      line-height: 1.4;
+      flex: 1;
+    }
+    .activity-card-pts {
+      font-family: var(--font-display);
+      font-size: 20px;
+      color: var(--accent);
+      flex-shrink: 0;
+      letter-spacing: 0.05em;
+    }
+    .activity-card-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .activity-complete-btn {
+      flex: 1;
+      padding: 8px;
+      border-radius: 8px;
+      border: none;
+      background: var(--accent);
+      color: var(--bg);
+      font-family: var(--font-display);
+      font-size: 14px;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .activity-complete-btn:disabled {
+      background: var(--border);
+      color: var(--muted);
+      cursor: default;
+    }
+    .activity-counter-row {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex: 1;
+    }
+    .counter-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+      font-size: 20px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: background 0.1s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .counter-btn:active { background: var(--border); }
+    .counter-value {
+      flex: 1;
+      text-align: center;
+      font-family: var(--font-display);
+      font-size: 22px;
+      color: var(--accent3);
+      letter-spacing: 0.05em;
+    }
+    .activity-first-badge {
+      font-size: 11px;
+      color: var(--accent2);
+      background: rgba(255,79,123,0.1);
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    /* ── LEADERBOARD ── */
+    .leaderboard-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .leaderboard-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+    .leaderboard-rank {
+      font-family: var(--font-display);
+      font-size: 22px;
+      width: 32px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .leaderboard-name {
+      flex: 1;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .leaderboard-points {
+      font-family: var(--font-display);
+      font-size: 24px;
+      color: var(--accent);
+      letter-spacing: 0.05em;
+    }
+
   </style>
 </head>
 <body>
@@ -1311,6 +1475,17 @@
   <div class="setup-scroll">
     <div class="setup-inner">
 
+      <!-- Step 0: Game Mode -->
+      <div class="setup-step">
+        <div class="step-title">00 — GAME MODE</div>
+        <div style="display:flex;gap:8px;">
+          <button id="mode-btn-bingo" class="mode-select-btn active" onclick="setSetupMode('bingo')">🎯 BINGO / PIngo</button>
+          <button id="mode-btn-points" class="mode-select-btn" onclick="setSetupMode('points')">⭐ POINTS MODE</button>
+        </div>
+        <div id="mode-desc-bingo" style="font-size:12px;color:var(--muted);margin-top:6px;">Classic bingo card format. Players check off squares and race to get PIngo!</div>
+        <div id="mode-desc-points" style="display:none;font-size:12px;color:var(--muted);margin-top:6px;">Players complete activities to earn points. Leaderboard tracks the score in real time.</div>
+      </div>
+
       <!-- Step 1: Room -->
       <div class="setup-step">
         <div class="step-title">01 — ROOM SETUP</div>
@@ -1337,8 +1512,8 @@
         </div>
       </div>
 
-      <!-- Step 2: Prompts -->
-      <div class="setup-step">
+      <!-- Step 2a: Prompts (bingo mode) -->
+      <div id="setup-bingo-section" class="setup-step">
         <div class="step-title">02 — CHALLENGE PROMPTS</div>
         <div class="add-prompt-row">
           <input id="prompt-input" type="text" placeholder="e.g. Do 10 pushups" autocomplete="off" />
@@ -1349,6 +1524,46 @@
         </div>
         <div id="prompt-list" class="prompt-list">
           <div class="empty-state">No prompts yet. Add some challenges!</div>
+        </div>
+      </div>
+
+      <!-- Step 2b: Activities (points mode) -->
+      <div id="setup-points-section" class="setup-step" style="display:none;">
+        <div class="step-title">02 — ACTIVITIES</div>
+        <div class="activity-builder-row">
+          <input id="act-desc-input" type="text" placeholder="e.g. Do 10 pushups" autocomplete="off" style="flex:1;" />
+        </div>
+        <div class="activity-builder-options">
+          <div class="form-group" style="margin:0;flex:1;">
+            <label style="font-size:11px;">Points</label>
+            <input id="act-points-input" type="number" value="10" min="1" max="9999" style="width:100%;" />
+          </div>
+          <div class="form-group" style="margin:0;flex:1;">
+            <label style="font-size:11px;">1st Bonus</label>
+            <input id="act-bonus-input" type="number" value="0" min="0" max="9999" style="width:100%;" />
+          </div>
+          <div class="form-group" style="margin:0;flex:1;align-items:center;">
+            <label style="font-size:11px;">Counter?</label>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;">
+              <label class="toggle-switch" style="margin:0;">
+                <input type="checkbox" id="act-counter-toggle" />
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+              </label>
+              <span id="act-counter-label" style="font-size:11px;color:var(--muted);">No</span>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="addPointsActivity()" style="margin-top:8px;width:100%;">+ ADD ACTIVITY</button>
+        <div class="prompt-counter" style="margin-top:8px;">
+          <span id="act-count">0</span> activities added
+        </div>
+        <div id="activity-list" class="prompt-list">
+          <div class="empty-state">No activities yet. Add some challenges!</div>
+        </div>
+        <div class="form-group" style="margin-top:16px;">
+          <label>End Timer (optional)</label>
+          <input id="setup-timer" type="datetime-local" style="width:100%;" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">Game will show a countdown timer. You still control when to officially end it.</div>
         </div>
       </div>
 
@@ -1553,6 +1768,145 @@
   </div>
 </div>
 
+<!-- ──────────────────────── POINTS PLAYER SCREEN ──────────────────────── -->
+<div id="screen-points-player" class="screen">
+  <div class="top-bar">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="btn btn-ghost" onclick="resetAndGoHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <span class="status-dot"></span>
+      <span id="pt-p-player-name" style="font-weight:700;font-size:15px;"></span>
+    </div>
+    <div style="text-align:center;">
+      <div class="top-bar-title">POINTS</div>
+      <div id="pt-p-party-name" style="font-size:12px;color:var(--muted);margin-top:-2px;"></div>
+    </div>
+    <div class="room-badge" id="pt-p-room-code"></div>
+  </div>
+
+  <div id="pt-p-timer-bar" style="display:none;background:var(--surface2);border-bottom:1px solid var(--border);padding:6px 16px;text-align:center;font-family:var(--font-display);font-size:14px;letter-spacing:0.08em;color:var(--accent3);"></div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab(this,'pt-p-tab-activities')">ACTIVITIES</button>
+    <button class="tab" onclick="switchTab(this,'pt-p-tab-leaderboard')">SCORES</button>
+    <button class="tab" onclick="switchTab(this,'pt-p-tab-feed')">FEED</button>
+    <button id="pt-p-chat-tab-btn" class="tab" onclick="switchTab(this,'pt-p-tab-chat');clearChatBadge('pt-p')">CHAT</button>
+    <button class="tab" style="color:var(--accent2);flex:0.6;" onclick="showLeaveConfirm()">LEAVE</button>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <!-- Activities Tab -->
+    <div id="pt-p-tab-activities" class="tab-panel active" style="padding:12px 12px 24px;">
+      <div id="pt-p-waiting-banner" style="display:none;text-align:center;padding:12px 16px 8px;">
+        <div style="font-family:var(--font-display);font-size:18px;color:var(--muted);letter-spacing:0.1em;">
+          <span class="status-dot" style="background:var(--muted);"></span>WAITING FOR HOST TO START
+        </div>
+      </div>
+      <div id="pt-p-activities" class="points-activity-list">
+        <div class="empty-state">Loading activities...</div>
+      </div>
+    </div>
+
+    <!-- Leaderboard Tab -->
+    <div id="pt-p-tab-leaderboard" class="tab-panel" style="padding:16px;">
+      <div class="section-header">LEADERBOARD</div>
+      <div id="pt-p-leaderboard" class="leaderboard-list">
+        <div class="empty-state">No scores yet!</div>
+      </div>
+    </div>
+
+    <!-- Feed Tab -->
+    <div id="pt-p-tab-feed" class="tab-panel" style="padding:16px;">
+      <div class="section-header">ACTIVITY</div>
+      <div id="pt-p-feed" class="activity-feed">
+        <div class="empty-state">No activity yet!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Tab -->
+  <div id="pt-p-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="pt-p-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="pt-p-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('pt-p')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('pt-p')" style="flex-shrink:0;">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ──────────────────────── POINTS HOST SCREEN ──────────────────────── -->
+<div id="screen-points-host" class="screen">
+  <div class="top-bar">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button class="btn btn-ghost" onclick="resetAndGoHome()" style="padding:4px 6px;font-size:16px;">←</button>
+      <span class="status-dot"></span>
+      <span id="pt-h-host-name" style="font-weight:700;font-size:15px;"></span>
+    </div>
+    <div style="text-align:center;">
+      <div class="top-bar-title">HOST · POINTS</div>
+      <div id="pt-h-party-name" style="font-size:12px;color:var(--muted);margin-top:-2px;"></div>
+    </div>
+    <div class="room-badge" id="pt-h-room-code" style="cursor:pointer;" onclick="copyRoomCode()"></div>
+  </div>
+
+  <div id="pt-h-timer-bar" style="display:none;background:var(--surface2);border-bottom:1px solid var(--border);padding:6px 16px;text-align:center;font-family:var(--font-display);font-size:14px;letter-spacing:0.08em;color:var(--accent3);"></div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab(this,'pt-h-tab-activities')">ACTIVITIES</button>
+    <button class="tab" onclick="switchTab(this,'pt-h-tab-leaderboard')">SCORES</button>
+    <button class="tab" onclick="switchTab(this,'pt-h-tab-players')">PLAYERS</button>
+    <button class="tab" onclick="switchTab(this,'pt-h-tab-feed')">FEED</button>
+    <button id="pt-h-chat-tab-btn" class="tab" onclick="switchTab(this,'pt-h-tab-chat');clearChatBadge('pt-h')">CHAT</button>
+    <button class="tab" style="color:var(--accent2);flex:0.5;" onclick="showHostActions()">LEAVE</button>
+  </div>
+
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+    <!-- Activities Tab -->
+    <div id="pt-h-tab-activities" class="tab-panel active" style="padding:12px 12px 24px;">
+      <div id="pt-h-game-controls" style="margin-bottom:12px;"></div>
+      <div id="pt-h-activities" class="points-activity-list">
+        <div class="empty-state">Loading activities...</div>
+      </div>
+    </div>
+
+    <!-- Leaderboard Tab -->
+    <div id="pt-h-tab-leaderboard" class="tab-panel" style="padding:16px;">
+      <div class="section-header">LEADERBOARD</div>
+      <div id="pt-h-leaderboard" class="leaderboard-list">
+        <div class="empty-state">No scores yet!</div>
+      </div>
+    </div>
+
+    <!-- Players Tab -->
+    <div id="pt-h-tab-players" class="tab-panel" style="padding:16px;">
+      <div class="section-header">PLAYERS (<span id="pt-h-player-count">0</span>)</div>
+      <div id="pt-h-participants" class="participant-grid">
+        <div class="empty-state">Waiting for players...</div>
+      </div>
+    </div>
+
+    <!-- Feed Tab -->
+    <div id="pt-h-tab-feed" class="tab-panel" style="padding:16px;">
+      <div class="section-header">ACTIVITY</div>
+      <div id="pt-h-feed" class="activity-feed">
+        <div class="empty-state">No activity yet!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat Tab -->
+  <div id="pt-h-tab-chat" class="tab-panel chat-panel" style="flex:1;overflow:hidden;">
+    <div id="pt-h-chat-messages" class="chat-messages">
+      <div class="empty-state">No messages yet. Say hi!</div>
+    </div>
+    <div class="chat-input-row">
+      <input id="pt-h-chat-input" type="text" placeholder="Send a message..." maxlength="200" onkeydown="if(event.key==='Enter')sendChat('pt-h')" />
+      <button class="btn btn-primary btn-sm" onclick="sendChat('pt-h')" style="flex-shrink:0;">Send</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── BINGO OVERLAY ──────────────────────── -->
 <div id="bingo-overlay">
   <div id="bingo-place-emoji" style="font-size:clamp(40px,12vw,64px);line-height:1;"></div>
@@ -1705,6 +2059,7 @@ let arbiterChecked = new Set();
 let isCurrentlyArbiter = false;
 let currentParticipants = [];
 let gameState = 'waiting'; // 'waiting' | 'active' | 'ended'
+let currentGameMode = 'bingo'; // 'bingo' | 'points'
 
 // ── UTILS ──
 function showScreen(id) {
@@ -1760,27 +2115,33 @@ function initSocket() {
   });
   socket.on('error', (msg) => { hideLoading(); showToast('⚠️ ' + msg); });
   socket.on('activity', (data) => {
+    if (currentGameMode === 'points') return; // points mode handles this itself
     addActivity(data.message, false);
   });
   socket.on('bingo', (data) => {
+    if (currentGameMode === 'points') return;
     addActivity(data.message, true);
     showBingoOverlay(data.participantName, data.place, data.placeEmoji);
   });
   socket.on('room:update', (data) => {
+    if (currentGameMode === 'points') return; // points mode handles this itself
     updateParticipantDisplays(data.participants);
   });
   socket.on('game:started', (data) => {
     gameState = data.state || 'active';
+    if (currentGameMode === 'points') { updatePointsWaitingBanner(); updatePointsHostControls(); return; }
     updateWaitingBanner();
     updateArbiterGameControls();
     showToast('Game started! Good luck!');
   });
   socket.on('game:over', (data) => {
     gameState = 'ended';
+    if (currentGameMode === 'points') { showPointsStandings(data.standings || []); updatePointsHostControls(); return; }
     updateArbiterGameControls();
     showStandingsOverlay(data.standings);
   });
   socket.on('chat:received', (data) => {
+    if (currentGameMode === 'points') return; // points mode handles this itself
     chatLog.push(data);
     renderChat();
     // Show unread badge if chat tab is not currently active
@@ -1838,6 +2199,11 @@ function resetAndGoHome() {
   chatLog = [];
   activityLog = [];
   chatUnread = { p: 0, a: 0 };
+  currentActivities = [];
+  pointsLeaderboard = [];
+  pointsTimerEnd = null;
+  currentGameMode = 'bingo';
+  if (pointsTimerInterval) { clearInterval(pointsTimerInterval); pointsTimerInterval = null; }
   if (socket) {
     socket.disconnect();
     socket = null;
@@ -1911,17 +2277,31 @@ async function createRoom() {
   if (!partyName) return showToast('Enter a party name!');
   if (!name) return showToast('Enter your name!');
   if (!password) return showToast('Set a room password!');
-  if (prompts.length < sz * sz) return showToast(`Need ${sz * sz} prompts for a ${sz}×${sz} grid (have ${prompts.length})`);
+
+  if (setupGameMode === 'bingo') {
+    if (prompts.length < sz * sz) return showToast(`Need ${sz * sz} prompts for a ${sz}×${sz} grid (have ${prompts.length})`);
+  } else {
+    if (pointsActivities.length === 0) return showToast('Add at least one activity!');
+  }
 
   const createBtn = document.querySelector('[onclick="createRoom()"]');
   if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'CREATING...'; }
+
+  let timerEndVal = null;
+  if (setupGameMode === 'points') {
+    const timerInput = document.getElementById('setup-timer').value;
+    if (timerInput) timerEndVal = new Date(timerInput).getTime();
+  }
 
   const body = {
     password, gridSize: sz, prompts,
     proofRequired: [...proofRequiredSet],
     arbiterId, arbiterName: name,
     username: loggedInUser,
-    partyName
+    partyName,
+    gameMode: setupGameMode,
+    activities: setupGameMode === 'points' ? pointsActivities : [],
+    timerEnd: timerEndVal
   };
 
   showLoading();
@@ -1956,6 +2336,14 @@ function setupArbiterDashboard(name, roomData) {
   hideLoading();
   isCurrentlyArbiter = true;
   gameState = roomData.gameState || 'waiting';
+
+  currentGameMode = roomData.gameMode || 'bingo';
+  // Route to Points Mode host screen if applicable
+  if (roomData.gameMode === 'points') {
+    setupPointsHost(roomData);
+    return;
+  }
+
   roomProofRequired = new Set(roomData.proofRequired || []);
   document.getElementById('a-arbiter-name').textContent = name;
   document.getElementById('a-room-code').textContent = roomData.roomCode;
@@ -2004,8 +2392,83 @@ function setupArbiterDashboard(name, roomData) {
   showScreen('screen-arbiter');
 }
 
+// ── POINTS MODE STATE ──
+let setupGameMode = 'bingo'; // 'bingo' | 'points'
+let pointsActivities = [];   // activity drafts during setup: { description, points, firstBonus, isCounter }
+let currentActivities = [];  // server activities in current room
+let pointsLeaderboard = [];  // cached leaderboard
+let pointsTimerEnd = null;
+let pointsTimerInterval = null;
+let pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+
+function setSetupMode(mode) {
+  setupGameMode = mode;
+  document.getElementById('mode-btn-bingo').classList.toggle('active', mode === 'bingo');
+  document.getElementById('mode-btn-points').classList.toggle('active', mode === 'points');
+  document.getElementById('mode-desc-bingo').style.display = mode === 'bingo' ? '' : 'none';
+  document.getElementById('mode-desc-points').style.display = mode === 'points' ? '' : 'none';
+  document.getElementById('setup-bingo-section').style.display = mode === 'bingo' ? '' : 'none';
+  document.getElementById('setup-points-section').style.display = mode === 'points' ? '' : 'none';
+  // grid size row only relevant for bingo
+  document.querySelector('.form-group:has(#setup-grid-size)').style.display = mode === 'bingo' ? '' : 'none';
+}
+
+document.getElementById('act-counter-toggle').addEventListener('change', function() {
+  document.getElementById('act-counter-label').textContent = this.checked ? 'Yes' : 'No';
+});
+
+function addPointsActivity() {
+  const desc = document.getElementById('act-desc-input').value.trim();
+  if (!desc) return showToast('Enter an activity description!');
+  const pts = Math.max(1, parseInt(document.getElementById('act-points-input').value) || 10);
+  const bonus = Math.max(0, parseInt(document.getElementById('act-bonus-input').value) || 0);
+  const isCounter = document.getElementById('act-counter-toggle').checked;
+  pointsActivities.push({ description: desc, points: pts, firstBonus: bonus, isCounter });
+  document.getElementById('act-desc-input').value = '';
+  renderActivityBuilderList();
+}
+
+document.getElementById('act-desc-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addPointsActivity();
+});
+
+function removeActivity(idx) {
+  pointsActivities.splice(idx, 1);
+  renderActivityBuilderList();
+}
+
+function renderActivityBuilderList() {
+  const list = document.getElementById('activity-list');
+  document.getElementById('act-count').textContent = pointsActivities.length;
+  if (pointsActivities.length === 0) {
+    list.innerHTML = '<div class="empty-state">No activities yet. Add some challenges!</div>';
+    return;
+  }
+  list.innerHTML = pointsActivities.map((a, i) => `
+    <div class="prompt-item">
+      <span class="prompt-num">${i+1}</span>
+      <span style="flex:1;">${esc(a.description)}</span>
+      <span style="font-size:11px;color:var(--accent);margin-right:4px;">${a.points}pts${a.firstBonus ? ' +'+a.firstBonus : ''}${a.isCounter ? ' 🔢' : ''}</span>
+      <button class="prompt-del" onclick="removeActivity(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
 // ── JOIN ROOM ──
 function openCreateGame() {
+  // Reset setup state
+  setupGameMode = 'bingo';
+  pointsActivities = [];
+  document.getElementById('mode-btn-bingo').classList.add('active');
+  document.getElementById('mode-btn-points').classList.remove('active');
+  document.getElementById('mode-desc-bingo').style.display = '';
+  document.getElementById('mode-desc-points').style.display = 'none';
+  document.getElementById('setup-bingo-section').style.display = '';
+  document.getElementById('setup-points-section').style.display = 'none';
+  try { document.querySelector('.form-group:has(#setup-grid-size)').style.display = ''; } catch(e) {}
+  document.getElementById('act-count').textContent = '0';
+  document.getElementById('activity-list').innerHTML = '<div class="empty-state">No activities yet. Add some challenges!</div>';
+  document.getElementById('setup-timer').value = '';
   document.getElementById('setup-party-name').value = '';
   document.getElementById('setup-password').value = '';
   document.getElementById('setup-arbiter-name').value = loggedInUser || '';
@@ -2323,11 +2786,17 @@ function showChatBadge(prefix) {
 }
 
 function clearChatBadge(prefix) {
-  chatUnread[prefix] = 0;
-  const btn = document.getElementById(`${prefix}-chat-tab-btn`);
-  if (!btn) return;
-  const badge = btn.querySelector('.tab-badge');
-  if (badge) badge.remove();
+  if (prefix === 'pt-p' || prefix === 'pt-h') {
+    pointsChatUnread[prefix] = 0;
+    const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+    if (btn) btn.textContent = 'CHAT';
+  } else {
+    chatUnread[prefix] = 0;
+    const btn = document.getElementById(`${prefix}-chat-tab-btn`);
+    if (!btn) return;
+    const badge = btn.querySelector('.tab-badge');
+    if (badge) badge.remove();
+  }
 }
 
 // ── BINGO OVERLAY ──
@@ -2478,12 +2947,15 @@ async function loadLobby() {
     list.innerHTML = rooms.map(r => {
       const alreadyJoined = r.userStatus === 'host' || r.userStatus === 'member';
       const isHost = r.userStatus === 'host';
+      const modeBadge = r.gameMode === 'points'
+        ? '<span style="font-size:10px;font-weight:700;color:var(--accent2);background:rgba(255,79,123,0.12);padding:2px 7px;border-radius:6px;letter-spacing:0.05em;">⭐ POINTS</span>'
+        : '<span style="font-size:10px;font-weight:700;color:var(--accent3);background:rgba(71,212,255,0.1);padding:2px 7px;border-radius:6px;letter-spacing:0.05em;">🎯 BINGO</span>';
       if (alreadyJoined) {
         return `
           <div class="lobby-card already-joined" data-action="rejoin" data-room="${esc(r.roomCode)}" data-is-host="${isHost}">
             <div>
               <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
-              <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
+              <div class="lobby-card-info">Hosted by ${esc(r.hostName)} ${modeBadge}</div>
               <div class="already-joined-badge">ALREADY JOINED</div>
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
@@ -2497,7 +2969,7 @@ async function loadLobby() {
         <div class="lobby-card" data-action="join" data-room="${esc(r.roomCode)}" data-party-name="${esc(r.partyName || '')}">
           <div>
             <div class="lobby-card-name">${esc(r.partyName || 'Unnamed Party')}</div>
-            <div class="lobby-card-info">Hosted by ${esc(r.hostName)}</div>
+            <div class="lobby-card-info">Hosted by ${esc(r.hostName)} ${modeBadge}</div>
           </div>
           <div class="lobby-card-players">${r.participantCount} player${r.participantCount !== 1 ? 's' : ''}</div>
         </div>
@@ -2859,10 +3331,18 @@ function handleParticipantJoined(data) {
   isCurrentlyArbiter = false;
   currentRoom = data.roomCode;
   myParticipantId = data.participantId;
+  gameState = data.gameState || 'waiting';
+
+  currentGameMode = data.gameMode || 'bingo';
+  // Route to Points Mode if applicable
+  if (data.gameMode === 'points') {
+    setupPointsPlayer(data);
+    return;
+  }
+
   myCard = data.card;
   myChecked = new Set(data.checked);
   gridSize = data.gridSize;
-  gameState = data.gameState || 'waiting';
   roomProofRequired = new Set(data.proofRequired || []);
 
   // Load room-specific chat history
@@ -2898,6 +3378,372 @@ function handleParticipantJoined(data) {
   });
 
   showScreen('screen-participant');
+}
+
+// ── POINTS MODE SCREEN SETUP ──
+
+function setupPointsPlayer(data) {
+  currentGameMode = 'points';
+  currentActivities = data.activities || [];
+  pointsTimerEnd = data.timerEnd || null;
+  chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
+  activityLog = [];
+  chatUnread = { p: 0, a: 0 };
+  pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+
+  document.getElementById('pt-p-player-name').textContent = loggedInUser;
+  document.getElementById('pt-p-room-code').textContent = data.roomCode;
+  document.getElementById('pt-p-party-name').textContent = data.partyName || '';
+
+  renderPointsActivities('pt-p', false);
+  renderPointsLeaderboard('pt-p', []);
+  renderPointsFeed('pt-p');
+  renderPointsChat('pt-p');
+  updatePointsTimerBar('pt-p');
+  updatePointsWaitingBanner();
+
+  socket.off('points:update');
+  socket.on('points:update', (d) => {
+    currentActivities = d.activities || currentActivities;
+    pointsLeaderboard = d.leaderboard || [];
+    renderPointsActivities('pt-p', false);
+    renderPointsLeaderboard('pt-p', pointsLeaderboard);
+  });
+
+  socket.off('activity');
+  socket.on('activity', (e) => {
+    activityLog.unshift(e);
+    renderPointsFeed('pt-p');
+  });
+
+  socket.off('chat:received');
+  socket.on('chat:received', (msg) => {
+    chatLog.push(msg);
+    renderPointsChat('pt-p');
+    const chatPanel = document.getElementById('pt-p-tab-chat');
+    if (chatPanel && !chatPanel.classList.contains('active')) {
+      pointsChatUnread['pt-p']++;
+      const btn = document.getElementById('pt-p-chat-tab-btn');
+      if (btn) btn.textContent = `CHAT (${pointsChatUnread['pt-p']})`;
+    }
+  });
+
+  socket.off('game:started');
+  socket.on('game:started', () => {
+    gameState = 'active';
+    updatePointsWaitingBanner();
+  });
+
+  socket.off('game:over');
+  socket.on('game:over', (d) => {
+    gameState = 'ended';
+    showPointsStandings(d.standings || []);
+  });
+
+  socket.off('room:update');
+  socket.on('room:update', () => {}); // no-op for points player
+
+  socket.off('kicked');
+  socket.on('kicked', () => { showToast('You were removed from the party.'); resetAndGoHome(); });
+
+  socket.off('room:deleted');
+  socket.on('room:deleted', () => { showToast('The party was deleted.'); resetAndGoHome(); });
+
+  if (pointsTimerInterval) clearInterval(pointsTimerInterval);
+  if (pointsTimerEnd) {
+    pointsTimerInterval = setInterval(() => updatePointsTimerBar('pt-p'), 1000);
+  }
+
+  showPushBannerIfNeeded();
+  showScreen('screen-points-player');
+}
+
+function setupPointsHost(data) {
+  currentGameMode = 'points';
+  currentActivities = data.activities || [];
+  pointsTimerEnd = data.timerEnd || null;
+  chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
+  activityLog = [];
+  chatUnread = { p: 0, a: 0 };
+  pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+
+  document.getElementById('pt-h-host-name').textContent = loggedInUser;
+  document.getElementById('pt-h-room-code').textContent = data.roomCode;
+  document.getElementById('pt-h-party-name').textContent = data.partyName || '';
+
+  const players = Array.isArray(data.participants) ? data.participants : Object.values(data.participants || {});
+  renderPointsActivities('pt-h', true);
+  renderPointsLeaderboard('pt-h', []);
+  renderPointsFeed('pt-h');
+  renderPointsChat('pt-h');
+  renderPointsPlayers(players);
+  updatePointsTimerBar('pt-h');
+  updatePointsHostControls();
+
+  socket.off('points:update');
+  socket.on('points:update', (d) => {
+    currentActivities = d.activities || currentActivities;
+    pointsLeaderboard = d.leaderboard || [];
+    renderPointsActivities('pt-h', true);
+    renderPointsLeaderboard('pt-h', pointsLeaderboard);
+  });
+
+  socket.off('activity');
+  socket.on('activity', (e) => {
+    activityLog.unshift(e);
+    renderPointsFeed('pt-h');
+  });
+
+  socket.off('chat:received');
+  socket.on('chat:received', (msg) => {
+    chatLog.push(msg);
+    renderPointsChat('pt-h');
+    const chatPanel = document.getElementById('pt-h-tab-chat');
+    if (chatPanel && !chatPanel.classList.contains('active')) {
+      pointsChatUnread['pt-h']++;
+      const btn = document.getElementById('pt-h-chat-tab-btn');
+      if (btn) btn.textContent = `CHAT (${pointsChatUnread['pt-h']})`;
+    }
+  });
+
+  socket.off('room:update');
+  socket.on('room:update', (d) => {
+    const ps = Array.isArray(d.participants) ? d.participants : Object.values(d.participants || {});
+    renderPointsPlayers(ps);
+  });
+
+  socket.off('game:started');
+  socket.on('game:started', () => {
+    gameState = 'active';
+    updatePointsHostControls();
+  });
+
+  socket.off('game:over');
+  socket.on('game:over', (d) => {
+    gameState = 'ended';
+    showPointsStandings(d.standings || []);
+    updatePointsHostControls();
+  });
+
+  socket.off('kicked');
+  socket.on('kicked', () => { showToast('You were removed.'); resetAndGoHome(); });
+
+  socket.off('room:deleted');
+  socket.on('room:deleted', () => { showToast('Party deleted.'); resetAndGoHome(); });
+
+  if (pointsTimerInterval) clearInterval(pointsTimerInterval);
+  if (pointsTimerEnd) {
+    pointsTimerInterval = setInterval(() => updatePointsTimerBar('pt-h'), 1000);
+  }
+
+  showPushBannerIfNeeded();
+  showScreen('screen-points-host');
+}
+
+function renderPointsActivities(prefix, isHost) {
+  const container = document.getElementById(`${prefix}-activities`);
+  if (!container) return;
+  if (!currentActivities.length) {
+    container.innerHTML = '<div class="empty-state">No activities.</div>';
+    return;
+  }
+
+  container.innerHTML = currentActivities.map(act => {
+    const myCount = (act.completions || {})[myParticipantId] || 0;
+    const isDone = !act.isCounter && myCount > 0;
+    const firstBy = act.firstCompletedBy;
+    const firstBadge = firstBy && act.firstBonus > 0
+      ? `<span class="activity-first-badge">🥇 +${act.firstBonus} bonus</span>` : '';
+
+    let controls;
+    if (act.isCounter) {
+      controls = `
+        <div class="activity-counter-row">
+          <button class="counter-btn" onclick="pointsDecrement('${esc(act.id)}')" ${gameState !== 'active' ? 'disabled' : ''}>−</button>
+          <div class="counter-value">${myCount}</div>
+          <button class="counter-btn" onclick="pointsIncrement('${esc(act.id)}')" ${gameState !== 'active' ? 'disabled' : ''}>+</button>
+        </div>
+      `;
+    } else {
+      controls = `
+        <button class="activity-complete-btn" onclick="pointsComplete('${esc(act.id)}')"
+          ${isDone || gameState !== 'active' ? 'disabled' : ''}>
+          ${isDone ? '✓ DONE' : 'COMPLETE'}
+        </button>
+      `;
+    }
+
+    // Total completions display
+    const totalDone = Object.values(act.completions || {}).reduce((s, v) => s + v, 0);
+    const completionsLabel = act.isCounter
+      ? `<span style="font-size:11px;color:var(--muted);">Total: ${totalDone} across all players</span>`
+      : `<span style="font-size:11px;color:var(--muted);">${totalDone} player${totalDone !== 1 ? 's' : ''} completed</span>`;
+
+    return `
+      <div class="activity-card${isDone ? ' done' : ''}">
+        <div class="activity-card-header">
+          <div class="activity-card-desc">${esc(act.description)}</div>
+          <div class="activity-card-pts">${act.points}pts</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${completionsLabel}${firstBadge}</div>
+        <div class="activity-card-footer">${controls}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderPointsLeaderboard(prefix, leaderboard) {
+  const container = document.getElementById(`${prefix}-leaderboard`);
+  if (!container) return;
+  if (!leaderboard || leaderboard.length === 0) {
+    container.innerHTML = '<div class="empty-state">No scores yet!</div>';
+    return;
+  }
+  const emojis = ['🥇','🥈','🥉'];
+  container.innerHTML = leaderboard.map((row, i) => `
+    <div class="leaderboard-row" style="${row.id === myParticipantId ? 'border-color:var(--accent);' : ''}">
+      <div class="leaderboard-rank">${emojis[i] || (i+1)}</div>
+      <div class="leaderboard-name">${esc(row.name)}${row.id === myParticipantId ? ' <span style="font-size:11px;color:var(--accent3);">(you)</span>' : ''}</div>
+      <div class="leaderboard-points">${row.points}</div>
+    </div>
+  `).join('');
+}
+
+function renderPointsFeed(prefix) {
+  const container = document.getElementById(`${prefix}-feed`);
+  if (!container) return;
+  if (activityLog.length === 0) {
+    container.innerHTML = '<div class="empty-state">No activity yet!</div>';
+    return;
+  }
+  container.innerHTML = activityLog.map(e =>
+    `<div class="feed-item"><span class="feed-msg">${esc(e.message)}</span></div>`
+  ).join('');
+}
+
+function renderPointsChat(prefix) {
+  const container = document.getElementById(`${prefix}-chat-messages`);
+  if (!container) return;
+  if (chatLog.length === 0) {
+    container.innerHTML = '<div class="empty-state">No messages yet. Say hi!</div>';
+    return;
+  }
+  container.innerHTML = chatLog.map(m => {
+    const isMe = m.senderName === loggedInUser;
+    return `<div class="chat-msg ${isMe ? 'mine' : ''}">
+      <div class="chat-msg-sender">${esc(m.senderName)}</div>
+      <div>${esc(m.message)}</div>
+      <div class="chat-msg-time">${formatTime ? formatTime(new Date(m.time)) : ''}</div>
+    </div>`;
+  }).join('');
+  container.scrollTop = container.scrollHeight;
+}
+
+function renderPointsPlayers(players) {
+  const container = document.getElementById('pt-h-participants');
+  const count = document.getElementById('pt-h-player-count');
+  if (!container) return;
+  const active = players.filter(p => !p.kicked);
+  if (count) count.textContent = active.length;
+  if (active.length === 0) {
+    container.innerHTML = '<div class="empty-state">Waiting for players...</div>';
+    return;
+  }
+  container.innerHTML = active.map(p => {
+    const pts = pointsLeaderboard.find(r => r.id === p.id)?.points || 0;
+    return `
+      <div class="participant-card${p.isHost ? ' host-card' : ''}">
+        <div class="participant-name">${esc(p.name)}</div>
+        <div style="font-family:var(--font-display);font-size:18px;color:var(--accent);">${pts} pts</div>
+        ${p.isHost ? '<div class="host-badge">HOST</div>' : ''}
+        ${!p.isHost ? `<button class="kick-btn" onclick="kickPlayer('${esc(p.id)}')">✕</button>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function updatePointsWaitingBanner() {
+  const banner = document.getElementById('pt-p-waiting-banner');
+  if (banner) banner.style.display = gameState === 'waiting' ? '' : 'none';
+}
+
+function updatePointsHostControls() {
+  const container = document.getElementById('pt-h-game-controls');
+  if (!container) return;
+  if (gameState === 'waiting') {
+    container.innerHTML = `<button class="btn btn-primary" style="width:100%;" onclick="pointsStartGame()">🎲 START GAME</button>`;
+  } else if (gameState === 'active') {
+    container.innerHTML = `<button class="btn btn-secondary" style="width:100%;" onclick="pointsEndGame()">END GAME</button>`;
+  } else {
+    container.innerHTML = `<div style="text-align:center;font-size:13px;color:var(--muted);">Game ended</div>`;
+  }
+}
+
+function updatePointsTimerBar(prefix) {
+  const bar = document.getElementById(`${prefix}-timer-bar`);
+  if (!bar || !pointsTimerEnd) return;
+  const diff = pointsTimerEnd - Date.now();
+  if (diff <= 0) {
+    bar.style.display = '';
+    bar.textContent = '⏰ TIME IS UP';
+    if (pointsTimerInterval) { clearInterval(pointsTimerInterval); pointsTimerInterval = null; }
+    return;
+  }
+  bar.style.display = '';
+  const h = Math.floor(diff / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  bar.textContent = `⏱ ${parts.join(' ')} remaining`;
+}
+
+function pointsComplete(actId) {
+  if (!socket || !currentRoom) return;
+  socket.emit('points:complete', { roomCode: currentRoom, activityId: actId });
+  haptic();
+}
+
+function pointsIncrement(actId) {
+  if (!socket || !currentRoom) return;
+  socket.emit('points:increment', { roomCode: currentRoom, activityId: actId });
+  haptic();
+}
+
+function pointsDecrement(actId) {
+  if (!socket || !currentRoom) return;
+  socket.emit('points:decrement', { roomCode: currentRoom, activityId: actId });
+  haptic();
+}
+
+function pointsStartGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:start', { roomCode: currentRoom });
+}
+
+function pointsEndGame() {
+  if (!socket || !currentRoom) return;
+  socket.emit('game:end', { roomCode: currentRoom });
+}
+
+function showPointsStandings(standings) {
+  const emojis = ['🥇','🥈','🥉'];
+  const listEl = document.getElementById('standings-list');
+  if (listEl) {
+    listEl.innerHTML = standings.map((s, i) => `
+      <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;">
+        <span style="font-size:24px;">${emojis[i] || (i+1)}</span>
+        <span style="flex:1;font-size:15px;font-weight:600;">${esc(s.name)}</span>
+        <span style="font-family:var(--font-display);font-size:22px;color:var(--accent);">${s.points || 0} pts</span>
+      </div>
+    `).join('');
+  }
+  const overlay = document.getElementById('standings-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  const playAgainBtn = document.getElementById('standings-play-again');
+  if (playAgainBtn) playAgainBtn.style.display = isCurrentlyArbiter ? '' : 'none';
 }
 
 function setupSocketListeners(isArbiter) {
@@ -3137,11 +3983,14 @@ async function loadMyParties() {
       const roleBadge = r.role === 'host'
         ? '<span style="font-size:11px;font-weight:700;color:var(--accent3);letter-spacing:0.05em;background:rgba(71,212,255,0.1);padding:2px 8px;border-radius:6px;">[HOST]</span>'
         : '<span style="font-size:11px;font-weight:700;color:var(--accent);letter-spacing:0.05em;background:rgba(232,255,71,0.1);padding:2px 8px;border-radius:6px;">[PLAYER]</span>';
+      const modeBadge = r.gameMode === 'points'
+        ? '<span style="font-size:10px;font-weight:700;color:var(--accent2);background:rgba(255,79,123,0.12);padding:2px 7px;border-radius:6px;">⭐ POINTS</span>'
+        : '<span style="font-size:10px;font-weight:700;color:var(--accent3);background:rgba(71,212,255,0.1);padding:2px 7px;border-radius:6px;">🎯 BINGO</span>';
       return `
         <div class="lobby-card" onclick="rejoinFromMyParties('${esc(r.roomCode)}', ${r.role === 'host'})">
           <div>
             <div class="lobby-card-name">${esc(r.partyName)}</div>
-            <div class="lobby-card-info">${roleBadge} Hosted by ${esc(r.hostName)}</div>
+            <div class="lobby-card-info">${roleBadge} ${modeBadge} Hosted by ${esc(r.hostName)}</div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
             <div class="lobby-card-players">${r.playerCount} player${r.playerCount !== 1 ? 's' : ''}</div>

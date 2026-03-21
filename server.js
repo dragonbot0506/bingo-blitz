@@ -338,7 +338,10 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     participants: getAllPlayers(room),
                     arbiterCard: room.arbiter.card,
                     arbiterChecked: room.arbiter.checked,
-                    gameState: room.state || 'waiting'
+                    gameState: room.state || 'waiting',
+                    gameMode: room.gameMode || 'bingo',
+                    activities: room.activities || [],
+                    timerEnd: room.timerEnd || null
                 }
             });
         }
@@ -367,6 +370,27 @@ function getAllPlayers(room) {
         });
     }
     return players;
+}
+
+function computeLeaderboard(room) {
+    if (!room.activities || !room.activities.length) return [];
+    const allPlayers = getAllPlayers(room);
+    return allPlayers.map(p => {
+        let points = 0;
+        const completionMap = {};
+        for (const act of room.activities) {
+            const c = (act.completions || {})[p.id] || 0;
+            if (act.isCounter) {
+                points += act.points * c;
+                completionMap[act.id] = c;
+            } else if (c > 0) {
+                points += act.points;
+                if (act.firstCompletedBy === p.id) points += (act.firstBonus || 0);
+                completionMap[act.id] = 1;
+            }
+        }
+        return { id: p.id, name: p.name, points, completionMap };
+    }).sort((a, b) => b.points - a.points);
 }
 
 // =======================
@@ -418,23 +442,33 @@ app.post('/api/rooms', (req, res) => {
             arbiterId,
             arbiterName,
             username,
-            partyName
+            partyName,
+            gameMode,
+            activities,
+            timerEnd
         } = req.body;
 
-        const parsedGridSize = Number(gridSize);
+        const mode = gameMode === 'points' ? 'points' : 'bingo';
 
         if (!password || typeof password !== 'string') {
             return res.status(400).json({ error: 'Missing password' });
         }
 
-        if (!Number.isInteger(parsedGridSize) || parsedGridSize < 2) {
-            return res.status(400).json({ error: 'Invalid grid size' });
-        }
-
-        if (!Array.isArray(prompts) || prompts.length < parsedGridSize * parsedGridSize) {
-            return res.status(400).json({
-                error: `Need at least ${parsedGridSize * parsedGridSize} prompts`
-            });
+        let parsedGridSize = 4; // default (unused for points mode)
+        if (mode === 'bingo') {
+            parsedGridSize = Number(gridSize);
+            if (!Number.isInteger(parsedGridSize) || parsedGridSize < 2) {
+                return res.status(400).json({ error: 'Invalid grid size' });
+            }
+            if (!Array.isArray(prompts) || prompts.length < parsedGridSize * parsedGridSize) {
+                return res.status(400).json({
+                    error: `Need at least ${parsedGridSize * parsedGridSize} prompts`
+                });
+            }
+        } else {
+            if (!Array.isArray(activities) || activities.length === 0) {
+                return res.status(400).json({ error: 'Points mode requires at least one activity' });
+            }
         }
 
         // One party per host at a time
@@ -452,11 +486,23 @@ app.post('/api/rooms', (req, res) => {
 
         const roomCode = generateRoomCode();
 
+        const sanitizedActivities = mode === 'points'
+            ? (activities || []).slice(0, 50).map((a, i) => ({
+                id: `act_${i}`,
+                description: String(a.description || '').trim().slice(0, 200),
+                points: Math.max(1, Math.min(9999, parseInt(a.points) || 10)),
+                firstBonus: Math.max(0, Math.min(9999, parseInt(a.firstBonus) || 0)),
+                isCounter: !!a.isCounter,
+                completions: {},
+                firstCompletedBy: null
+            })).filter(a => a.description)
+            : [];
+
         rooms[roomCode] = {
             password,
             gridSize: parsedGridSize,
-            prompts: prompts.slice(0, parsedGridSize * parsedGridSize),
-            proofRequired: Array.isArray(proofRequired)
+            prompts: mode === 'bingo' ? prompts.slice(0, parsedGridSize * parsedGridSize) : [],
+            proofRequired: (mode === 'bingo' && Array.isArray(proofRequired))
                 ? proofRequired.filter(s => typeof s === 'string').slice(0, 100)
                 : [],
             partyName: partyName || 'Unnamed Party',
@@ -476,7 +522,10 @@ app.post('/api/rooms', (req, res) => {
             placementCounter: 0,
             chatHistory: [],
             createdAt: Date.now(),
-            lastActivity: Date.now()
+            lastActivity: Date.now(),
+            gameMode: mode,
+            activities: sanitizedActivities,
+            timerEnd: (mode === 'points' && timerEnd) ? Number(timerEnd) : null
         };
 
         console.log('ROOM CREATED:', roomCode);
@@ -507,6 +556,7 @@ app.get('/api/rooms', (req, res) => {
             participantCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
             gridSize: room.gridSize,
             hostName: room.arbiter?.name || 'Unknown',
+            gameMode: room.gameMode || 'bingo',
             userStatus
         };
     });
@@ -553,7 +603,8 @@ app.get('/api/my-rooms', requireAuth, (req, res) => {
                 role: 'host',
                 playerCount: Object.values(room.participants).filter(p => !p.kicked).length + 1,
                 gridSize: room.gridSize,
-                hostName: room.arbiter.name
+                hostName: room.arbiter.name,
+                gameMode: room.gameMode || 'bingo'
             });
         } else if (room.participants[username] && !room.participants[username].kicked) {
             myRooms.push({
@@ -562,7 +613,8 @@ app.get('/api/my-rooms', requireAuth, (req, res) => {
                 role: 'player',
                 playerCount: Object.values(room.participants).filter(p => !p.kicked).length + (room.arbiter ? 1 : 0),
                 gridSize: room.gridSize,
-                hostName: room.arbiter?.name || 'Unknown'
+                hostName: room.arbiter?.name || 'Unknown',
+                gameMode: room.gameMode || 'bingo'
             });
         }
     }
@@ -692,7 +744,10 @@ io.on('connection', (socket) => {
                 arbiterCard: room.arbiter.card,
                 arbiterChecked: room.arbiter.checked,
                 gameState: room.state || 'waiting',
-                chatHistory: room.chatHistory || []
+                chatHistory: room.chatHistory || [],
+                gameMode: room.gameMode || 'bingo',
+                activities: room.activities || [],
+                timerEnd: room.timerEnd || null
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -740,7 +795,10 @@ io.on('connection', (socket) => {
                     partyName: room.partyName,
                     proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting',
-                    chatHistory: room.chatHistory || []
+                    chatHistory: room.chatHistory || [],
+                    gameMode: room.gameMode || 'bingo',
+                    activities: room.activities || [],
+                    timerEnd: room.timerEnd || null
                 });
 
                 io.to(code).emit('room:update', {
@@ -789,7 +847,10 @@ io.on('connection', (socket) => {
                 roomCode: code,
                 partyName: room.partyName,
                 gameState: room.state || 'waiting',
-                chatHistory: room.chatHistory || []
+                chatHistory: room.chatHistory || [],
+                gameMode: room.gameMode || 'bingo',
+                activities: room.activities || [],
+                timerEnd: room.timerEnd || null
             });
 
             io.to(code).emit('room:update', {
@@ -825,7 +886,10 @@ io.on('connection', (socket) => {
                     arbiterCard: room.arbiter.card,
                     arbiterChecked: room.arbiter.checked,
                     gameState: room.state || 'waiting',
-                    chatHistory: room.chatHistory || []
+                    chatHistory: room.chatHistory || [],
+                    gameMode: room.gameMode || 'bingo',
+                    activities: room.activities || [],
+                    timerEnd: room.timerEnd || null
                 });
             } else {
                 const participant = room.participants[username];
@@ -842,7 +906,10 @@ io.on('connection', (socket) => {
                     partyName: room.partyName,
                     proofRequired: room.proofRequired || [],
                     gameState: room.state || 'waiting',
-                    chatHistory: room.chatHistory || []
+                    chatHistory: room.chatHistory || [],
+                    gameMode: room.gameMode || 'bingo',
+                    activities: room.activities || [],
+                    timerEnd: room.timerEnd || null
                 });
 
                 io.to(code).emit('room:update', {
@@ -974,11 +1041,18 @@ io.on('connection', (socket) => {
 
             room.state = 'ended';
 
-            const standings = getAllPlayers(room)
-                .map(p => ({ name: p.name, place: p.place, checkedCount: p.checked.length, hasBingo: p.hasBingo }))
-                .sort((a, b) => (a.place || 999) - (b.place || 999));
+            let standings;
+            if (room.gameMode === 'points') {
+                standings = computeLeaderboard(room).map((p, i) => ({
+                    name: p.name, place: i + 1, points: p.points
+                }));
+            } else {
+                standings = getAllPlayers(room)
+                    .map(p => ({ name: p.name, place: p.place, checkedCount: p.checked.length, hasBingo: p.hasBingo }))
+                    .sort((a, b) => (a.place || 999) - (b.place || 999));
+            }
 
-            io.to(code).emit('game:over', { standings });
+            io.to(code).emit('game:over', { standings, gameMode: room.gameMode || 'bingo' });
             io.to(code).emit('activity', { message: 'The host has ended the game.' });
             sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
         } catch (err) {
@@ -1053,6 +1127,65 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('game:reset error:', err);
         }
+    });
+
+    // ── POINTS MODE HANDLERS ──
+    socket.on('points:complete', ({ roomCode, activityId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || room.gameMode !== 'points') return;
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+            const playerId = userInfo.username;
+            const act = room.activities.find(a => a.id === activityId);
+            if (!act || act.isCounter) return;
+            if ((act.completions[playerId] || 0) > 0) return; // already done
+            act.completions[playerId] = 1;
+            if (!act.firstCompletedBy) act.firstCompletedBy = playerId;
+            room.lastActivity = Date.now();
+            const name = room.participants[playerId]?.name || room.arbiter?.name || playerId;
+            const leaderboard = computeLeaderboard(room);
+            io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+            io.to(code).emit('activity', { message: `${name} completed "${act.description}"!`, participantName: name });
+            sendPushToAll(room, 'Activity Completed!', `${name} completed "${act.description}"`, playerId, 'task');
+        } catch (err) { console.error('points:complete error:', err); }
+    });
+
+    socket.on('points:increment', ({ roomCode, activityId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || room.gameMode !== 'points') return;
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+            const playerId = userInfo.username;
+            const act = room.activities.find(a => a.id === activityId);
+            if (!act || !act.isCounter) return;
+            act.completions[playerId] = (act.completions[playerId] || 0) + 1;
+            room.lastActivity = Date.now();
+            const leaderboard = computeLeaderboard(room);
+            io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+        } catch (err) { console.error('points:increment error:', err); }
+    });
+
+    socket.on('points:decrement', ({ roomCode, activityId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || room.gameMode !== 'points') return;
+            const userInfo = socketToUser[socket.id];
+            if (!userInfo) return;
+            const playerId = userInfo.username;
+            const act = room.activities.find(a => a.id === activityId);
+            if (!act || !act.isCounter) return;
+            const current = act.completions[playerId] || 0;
+            if (current <= 0) return;
+            act.completions[playerId] = current - 1;
+            room.lastActivity = Date.now();
+            const leaderboard = computeLeaderboard(room);
+            io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+        } catch (err) { console.error('points:decrement error:', err); }
     });
 
     socket.on('task:photo', ({ roomCode, cellIndex, imageData }) => {
@@ -1337,7 +1470,10 @@ io.on('connection', (socket) => {
                             checked: oldArbiter.checked,
                             gridSize: room.gridSize,
                             roomCode: code,
-                            partyName: room.partyName
+                            partyName: room.partyName,
+                            gameMode: room.gameMode || 'bingo',
+                            activities: room.activities || [],
+                            timerEnd: room.timerEnd || null
                         }
                     });
                 }
@@ -1357,7 +1493,10 @@ io.on('connection', (socket) => {
                             participants: getAllPlayers(room),
                             arbiterCard: room.arbiter.card,
                             arbiterChecked: room.arbiter.checked,
-                    gameState: room.state || 'waiting'
+                            gameState: room.state || 'waiting',
+                            gameMode: room.gameMode || 'bingo',
+                            activities: room.activities || [],
+                            timerEnd: room.timerEnd || null
                         }
                     });
                 }
