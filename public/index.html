@@ -1129,7 +1129,7 @@
   </div>
   <div id="welcome-user" style="font-size:14px;color:var(--muted);margin-bottom:24px;text-align:center;"></div>
   <div class="landing-btns">
-    <button class="btn btn-primary" onclick="showScreen('screen-arbiter-setup')">CREATE GAME</button>
+    <button class="btn btn-primary" onclick="openCreateGame()">CREATE GAME</button>
     <button class="btn btn-secondary" onclick="openJoinScreen()">JOIN GAME</button>
     <button class="btn btn-secondary" onclick="openLobby()">BROWSE PARTIES</button>
     <button class="btn btn-secondary" onclick="openMyParties()">MY PARTIES</button>
@@ -1519,6 +1519,10 @@
           <div class="info-row">
             <span>Join URL</span>
             <button class="copy-btn" onclick="copyJoinLink()">Copy Link</button>
+          </div>
+          <div class="info-row">
+            <span>Room Password</span>
+            <strong id="info-room-password" style="color:var(--accent3);font-family:var(--font-display);letter-spacing:0.05em;"></strong>
           </div>
           <div class="info-row">
             <span>Grid Size</span>
@@ -1958,6 +1962,7 @@ function setupArbiterDashboard(name, roomData) {
   document.getElementById('a-party-name').textContent = roomData.partyName || '';
   document.getElementById('info-room-code').textContent = roomData.roomCode;
   document.getElementById('info-party-name').textContent = roomData.partyName || '';
+  document.getElementById('info-room-password').textContent = roomData.password || '';
   document.getElementById('info-grid-size').textContent = `${roomData.gridSize}×${roomData.gridSize}`;
 
   // Load room-specific chat history
@@ -2000,6 +2005,13 @@ function setupArbiterDashboard(name, roomData) {
 }
 
 // ── JOIN ROOM ──
+function openCreateGame() {
+  document.getElementById('setup-party-name').value = '';
+  document.getElementById('setup-password').value = '';
+  document.getElementById('setup-arbiter-name').value = loggedInUser || '';
+  showScreen('screen-arbiter-setup');
+}
+
 function openJoinScreen() {
   document.getElementById('join-code').value = '';
   document.getElementById('join-password').value = '';
@@ -2586,25 +2598,26 @@ async function autoRegisterPush() {
   if (!currentRoom) return;
 
   try {
-    if (!vapidPublicKey) {
-      const resp = await fetch('/api/vapid-public-key');
-      const data = await resp.json();
-      vapidPublicKey = data.publicKey;
-    }
+    // Always fetch the current VAPID key to detect server restarts
+    const vapidResp = await fetch('/api/vapid-public-key');
+    const vapidData = await vapidResp.json();
+    vapidPublicKey = vapidData.publicKey;
 
     const reg = await navigator.serviceWorker.ready;
-    let sub = await reg.pushManager.getSubscription();
 
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
-      });
-    }
+    // Unsubscribe any existing subscription — VAPID keys rotate on server
+    // restarts, making old subscriptions invalid (401 errors on send).
+    // Force a fresh subscription every join so keys always match.
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) await existing.unsubscribe();
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+    });
 
     pushSubscription = sub;
 
-    // Always re-register with the server for the current room
     await fetch('/api/push-subscribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
