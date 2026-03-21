@@ -509,19 +509,6 @@ app.post('/api/rooms', (req, res) => {
             }
         }
 
-        // One party per host at a time
-        if (username) {
-            const trimmedUser = String(username).trim().toLowerCase();
-            if (users[trimmedUser] && users[trimmedUser].activeRoom) {
-                const existing = users[trimmedUser].activeRoom;
-                if (existing.isArbiter && rooms[existing.roomCode]) {
-                    return res.status(400).json({
-                        error: 'You already host an active party. Delete it or transfer host before creating a new one.'
-                    });
-                }
-            }
-        }
-
         const roomCode = generateRoomCode();
 
         const sanitizedActivities = mode === 'points'
