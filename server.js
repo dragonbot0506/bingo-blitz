@@ -1494,6 +1494,11 @@ io.on('connection', (socket) => {
             target.hasBingo = checkBingo(checkedSet, room.gridSize);
             room.lastActivity = Date.now();
 
+            // Remove associated photo so it no longer appears as valid
+            if (target.photos && target.photos[cellIndex] !== undefined) {
+                delete target.photos[cellIndex];
+            }
+
             // Notify the target player
             if (targetSocket) {
                 const ts = io.sockets.sockets.get(targetSocket);
