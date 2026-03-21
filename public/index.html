@@ -2063,6 +2063,15 @@
   </div>
 </div>
 
+<!-- ──────────────────────── GLOBAL JOIN REQUEST STRIP (host, all screens) ──────────────────────── -->
+<div id="global-join-request-strip" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9998;background:var(--accent3);color:#fff;padding:10px 16px;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.4);">
+  <span id="global-join-request-text" style="font-size:13px;font-weight:600;"></span>
+  <div style="display:flex;gap:8px;flex-shrink:0;">
+    <button class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.5);" onclick="denyJoinRequest()">Deny</button>
+    <button class="btn btn-sm" style="background:#fff;color:var(--accent3);font-weight:700;" onclick="approveJoinRequest()">Approve</button>
+  </div>
+</div>
+
 <!-- ──────────────────────── HOST ACTIONS MODAL ──────────────────────── -->
 <div id="host-actions-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:600;align-items:center;justify-content:center;">
   <div class="confirm-box">
@@ -2298,11 +2307,14 @@ function resetAndGoHome() {
   currentGameMode = 'bingo';
   playerDetailOpenId = null;
   playerDetailOpenName = null;
+  pendingJoinRequestId = null;
+  pendingJoinRequestName = null;
   if (pointsTimerInterval) { clearInterval(pointsTimerInterval); pointsTimerInterval = null; }
   if (socket) {
     socket.disconnect();
     socket = null;
   }
+  renderJoinRequestBanner();
   showScreen('screen-landing');
 }
 
@@ -4150,14 +4162,11 @@ let pendingJoinRequestName = null;
 function handleJoinRequest(data) {
   pendingJoinRequestId = data.playerId;
   pendingJoinRequestName = data.playerName;
-  document.getElementById('join-request-text').textContent = `${data.playerName} wants to rejoin the party.`;
-  document.getElementById('join-request-modal').style.display = 'flex';
   renderJoinRequestBanner();
   showToast(`⚠️ ${data.playerName} is requesting to rejoin`);
 }
 
 function approveJoinRequest() {
-  document.getElementById('join-request-modal').style.display = 'none';
   if (pendingJoinRequestId && socket && currentRoom) {
     socket.emit('join:approve', { roomCode: currentRoom, playerId: pendingJoinRequestId });
   }
@@ -4167,7 +4176,6 @@ function approveJoinRequest() {
 }
 
 function denyJoinRequest() {
-  document.getElementById('join-request-modal').style.display = 'none';
   if (pendingJoinRequestId && socket && currentRoom) {
     socket.emit('join:deny', { roomCode: currentRoom, playerId: pendingJoinRequestId });
   }
@@ -4177,21 +4185,32 @@ function denyJoinRequest() {
 }
 
 function renderJoinRequestBanner() {
+  // In-screen banner (points host players tab)
   const el = document.getElementById('pt-h-join-requests');
-  if (!el) return;
-  if (!pendingJoinRequestId) {
-    el.style.display = 'none';
-    el.innerHTML = '';
-    return;
+  if (el) {
+    if (!pendingJoinRequestId) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+    } else {
+      el.style.display = 'block';
+      el.innerHTML = `<div style="background:var(--surface2);border:1.5px solid var(--accent3);border-radius:var(--radius);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <span style="font-size:13px;"><strong>${esc(pendingJoinRequestName)}</strong> wants to rejoin</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-secondary btn-sm" onclick="denyJoinRequest()">Deny</button>
+          <button class="btn btn-primary btn-sm" onclick="approveJoinRequest()">Approve</button>
+        </div>
+      </div>`;
+    }
   }
-  el.style.display = 'block';
-  el.innerHTML = `<div style="background:var(--surface2);border:1.5px solid var(--accent3);border-radius:var(--radius);padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-    <span style="font-size:13px;"><strong>${esc(pendingJoinRequestName)}</strong> wants to rejoin</span>
-    <div style="display:flex;gap:6px;">
-      <button class="btn btn-secondary btn-sm" onclick="denyJoinRequest()">Deny</button>
-      <button class="btn btn-primary btn-sm" onclick="approveJoinRequest()">Approve</button>
-    </div>
-  </div>`;
+  // Global fixed strip — visible on every screen
+  const strip = document.getElementById('global-join-request-strip');
+  if (!strip) return;
+  if (!pendingJoinRequestId) {
+    strip.style.display = 'none';
+  } else {
+    document.getElementById('global-join-request-text').textContent = `⚠️ ${pendingJoinRequestName} wants to rejoin the party`;
+    strip.style.display = 'flex';
+  }
 }
 
 function closeJoinPendingModal() {

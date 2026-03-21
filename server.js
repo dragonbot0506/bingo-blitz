@@ -947,6 +947,12 @@ io.on('connection', (socket) => {
                     timerEnd: room.timerEnd || null,
                     leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 });
+                // Re-send any pending join requests to the newly connected host socket
+                if (room.pendingJoinRequests) {
+                    for (const [playerId, req] of Object.entries(room.pendingJoinRequests)) {
+                        socket.emit('join:request', { playerId, playerName: req.name });
+                    }
+                }
             } else {
                 const participant = room.participants[username];
                 if (!participant || participant.kicked) return socket.emit('error', 'Not in this room');
