@@ -1231,6 +1231,53 @@
       letter-spacing: 0.05em;
     }
 
+    /* ── HOST UNDO PANEL ── */
+    .host-undo-panel {
+      margin-top: 8px;
+      border-top: 1px solid var(--border);
+      padding-top: 8px;
+    }
+    .host-undo-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .host-undo-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    .host-undo-name { flex: 1; color: var(--text); }
+    .host-undo-count {
+      font-family: var(--font-display);
+      font-size: 16px;
+      color: var(--accent3);
+      min-width: 24px;
+      text-align: center;
+    }
+    .host-undo-btn {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--accent2);
+      background: rgba(255,79,123,0.1);
+      color: var(--accent2);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    /* ── LEADERBOARD NOTE ── */
+    .leaderboard-note {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      padding: 8px 0;
+    }
+
   </style>
 </head>
 <body>
@@ -1937,6 +1984,17 @@
   </div>
 </div>
 
+<!-- ──────────────────────── POINTS CONFIRM MODAL ──────────────────────── -->
+<div id="points-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:850;align-items:center;justify-content:center;">
+  <div class="confirm-box" style="padding:24px 20px;gap:16px;">
+    <p id="points-confirm-text" style="font-size:15px;text-align:center;line-height:1.4;"></p>
+    <div class="confirm-btns">
+      <button class="btn btn-secondary btn-sm" onclick="cancelPointsAction()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="confirmPointsAction()">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- ──────────────────────── CELL CONFIRM MODAL ──────────────────────── -->
 <div id="cell-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;align-items:center;justify-content:center;">
   <div class="confirm-box" style="padding:24px 20px;gap:16px;">
@@ -2400,6 +2458,7 @@ let pointsLeaderboard = [];  // cached leaderboard
 let pointsTimerEnd = null;
 let pointsTimerInterval = null;
 let pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+let pendingPointsAction = null;
 
 function setSetupMode(mode) {
   setupGameMode = mode;
@@ -3386,17 +3445,21 @@ function setupPointsPlayer(data) {
   currentGameMode = 'points';
   currentActivities = data.activities || [];
   pointsTimerEnd = data.timerEnd || null;
+  pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
   activityLog = [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+  pendingPointsAction = null;
+  // Ensure myParticipantId is set for players
+  if (!myParticipantId) myParticipantId = data.participantId || loggedInUser;
 
   document.getElementById('pt-p-player-name').textContent = loggedInUser;
   document.getElementById('pt-p-room-code').textContent = data.roomCode;
   document.getElementById('pt-p-party-name').textContent = data.partyName || '';
 
   renderPointsActivities('pt-p', false);
-  renderPointsLeaderboard('pt-p', []);
+  renderPointsLeaderboard('pt-p', pointsLeaderboard);
   renderPointsFeed('pt-p');
   renderPointsChat('pt-p');
   updatePointsTimerBar('pt-p');
@@ -3432,11 +3495,14 @@ function setupPointsPlayer(data) {
   socket.on('game:started', () => {
     gameState = 'active';
     updatePointsWaitingBanner();
+    renderPointsActivities('pt-p', false);
   });
 
   socket.off('game:over');
   socket.on('game:over', (d) => {
     gameState = 'ended';
+    renderPointsActivities('pt-p', false);
+    renderPointsLeaderboard('pt-p', pointsLeaderboard);
     showPointsStandings(d.standings || []);
   });
 
@@ -3462,10 +3528,14 @@ function setupPointsHost(data) {
   currentGameMode = 'points';
   currentActivities = data.activities || [];
   pointsTimerEnd = data.timerEnd || null;
+  pointsLeaderboard = data.leaderboard || [];
   chatLog = Array.isArray(data.chatHistory) ? data.chatHistory : [];
   activityLog = [];
   chatUnread = { p: 0, a: 0 };
   pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
+  pendingPointsAction = null;
+  // Host is also a player — set myParticipantId so their own completions render correctly
+  myParticipantId = loggedInUser;
 
   document.getElementById('pt-h-host-name').textContent = loggedInUser;
   document.getElementById('pt-h-room-code').textContent = data.roomCode;
@@ -3473,7 +3543,7 @@ function setupPointsHost(data) {
 
   const players = Array.isArray(data.participants) ? data.participants : Object.values(data.participants || {});
   renderPointsActivities('pt-h', true);
-  renderPointsLeaderboard('pt-h', []);
+  renderPointsLeaderboard('pt-h', pointsLeaderboard);
   renderPointsFeed('pt-h');
   renderPointsChat('pt-h');
   renderPointsPlayers(players);
@@ -3516,11 +3586,14 @@ function setupPointsHost(data) {
   socket.on('game:started', () => {
     gameState = 'active';
     updatePointsHostControls();
+    renderPointsActivities('pt-h', true);
   });
 
   socket.off('game:over');
   socket.on('game:over', (d) => {
     gameState = 'ended';
+    renderPointsActivities('pt-h', true);
+    renderPointsLeaderboard('pt-h', pointsLeaderboard);
     showPointsStandings(d.standings || []);
     updatePointsHostControls();
   });
@@ -3551,42 +3624,72 @@ function renderPointsActivities(prefix, isHost) {
   container.innerHTML = currentActivities.map(act => {
     const myCount = (act.completions || {})[myParticipantId] || 0;
     const isDone = !act.isCounter && myCount > 0;
-    const firstBy = act.firstCompletedBy;
-    const firstBadge = firstBy && act.firstBonus > 0
-      ? `<span class="activity-first-badge">🥇 +${act.firstBonus} bonus</span>` : '';
+    const active = gameState === 'active';
 
+    // First-completion bonus badge (standard activities only)
+    const firstBadge = (!act.isCounter && act.firstBonus > 0)
+      ? `<span class="activity-first-badge">🥇 +${act.firstBonus} first bonus</span>` : '';
+
+    // Points label: counter activities note they score at end
+    const ptsLabel = act.isCounter
+      ? `<span class="activity-card-pts" style="font-size:14px;color:var(--muted);">${act.points}pts at end</span>`
+      : `<span class="activity-card-pts">${act.points}pts</span>`;
+
+    // Player controls
     let controls;
     if (act.isCounter) {
+      // Counter: − [count] + with confirmation each press
       controls = `
         <div class="activity-counter-row">
-          <button class="counter-btn" onclick="pointsDecrement('${esc(act.id)}')" ${gameState !== 'active' ? 'disabled' : ''}>−</button>
+          <button class="counter-btn" onclick="pointsDecrement('${esc(act.id)}','${esc(act.description)}')" ${!active ? 'disabled' : ''}>−</button>
           <div class="counter-value">${myCount}</div>
-          <button class="counter-btn" onclick="pointsIncrement('${esc(act.id)}')" ${gameState !== 'active' ? 'disabled' : ''}>+</button>
+          <button class="counter-btn" onclick="pointsIncrement('${esc(act.id)}','${esc(act.description)}')" ${!active ? 'disabled' : ''}>+</button>
         </div>
       `;
     } else {
+      // Standard: single COMPLETE button with confirmation
       controls = `
-        <button class="activity-complete-btn" onclick="pointsComplete('${esc(act.id)}')"
-          ${isDone || gameState !== 'active' ? 'disabled' : ''}>
+        <button class="activity-complete-btn"
+          onclick="pointsComplete('${esc(act.id)}','${esc(act.description)}')"
+          ${isDone || !active ? 'disabled' : ''}>
           ${isDone ? '✓ DONE' : 'COMPLETE'}
         </button>
       `;
     }
 
-    // Total completions display
+    // Summary line
     const totalDone = Object.values(act.completions || {}).reduce((s, v) => s + v, 0);
-    const completionsLabel = act.isCounter
-      ? `<span style="font-size:11px;color:var(--muted);">Total: ${totalDone} across all players</span>`
+    const summaryLabel = act.isCounter
+      ? `<span style="font-size:11px;color:var(--muted);">Total across all players: ${totalDone}</span>`
       : `<span style="font-size:11px;color:var(--muted);">${totalDone} player${totalDone !== 1 ? 's' : ''} completed</span>`;
+
+    // Host undo panel — shows all players' completions for this activity
+    let undoPanel = '';
+    if (isHost && pointsLeaderboard.length > 0) {
+      const undoRows = pointsLeaderboard.map(row => {
+        const c = (act.completions || {})[row.id] || 0;
+        if (!act.isCounter && c === 0) return ''; // skip non-completers for standard
+        return `
+          <div class="host-undo-row">
+            <span class="host-undo-name">${esc(row.name)}</span>
+            <span class="host-undo-count">${act.isCounter ? c : '✓'}</span>
+            <button class="host-undo-btn" onclick="pointsUndo('${esc(act.id)}','${esc(row.id)}','${esc(row.name)}',${act.isCounter})" ${c === 0 ? 'disabled style="opacity:0.4;"' : ''}>↩ Undo</button>
+          </div>`;
+      }).filter(Boolean).join('');
+      if (undoRows) {
+        undoPanel = `<div class="host-undo-panel"><div class="host-undo-title">PLAYER COMPLETIONS</div>${undoRows}</div>`;
+      }
+    }
 
     return `
       <div class="activity-card${isDone ? ' done' : ''}">
         <div class="activity-card-header">
           <div class="activity-card-desc">${esc(act.description)}</div>
-          <div class="activity-card-pts">${act.points}pts</div>
+          ${ptsLabel}
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${completionsLabel}${firstBadge}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${summaryLabel}${firstBadge}</div>
         <div class="activity-card-footer">${controls}</div>
+        ${undoPanel}
       </div>
     `;
   }).join('');
@@ -3595,12 +3698,18 @@ function renderPointsActivities(prefix, isHost) {
 function renderPointsLeaderboard(prefix, leaderboard) {
   const container = document.getElementById(`${prefix}-leaderboard`);
   if (!container) return;
+
+  // Note about counter tasks
+  const hasCounters = currentActivities.some(a => a.isCounter);
+  const note = hasCounters && gameState !== 'ended'
+    ? '<div class="leaderboard-note">⭐ Counter task points awarded at game end to the leader</div>' : '';
+
   if (!leaderboard || leaderboard.length === 0) {
-    container.innerHTML = '<div class="empty-state">No scores yet!</div>';
+    container.innerHTML = note + '<div class="empty-state">No scores yet!</div>';
     return;
   }
   const emojis = ['🥇','🥈','🥉'];
-  container.innerHTML = leaderboard.map((row, i) => `
+  container.innerHTML = note + leaderboard.map((row, i) => `
     <div class="leaderboard-row" style="${row.id === myParticipantId ? 'border-color:var(--accent);' : ''}">
       <div class="leaderboard-rank">${emojis[i] || (i+1)}</div>
       <div class="leaderboard-name">${esc(row.name)}${row.id === myParticipantId ? ' <span style="font-size:11px;color:var(--accent3);">(you)</span>' : ''}</div>
@@ -3700,22 +3809,56 @@ function updatePointsTimerBar(prefix) {
   bar.textContent = `⏱ ${parts.join(' ')} remaining`;
 }
 
-function pointsComplete(actId) {
-  if (!socket || !currentRoom) return;
-  socket.emit('points:complete', { roomCode: currentRoom, activityId: actId });
-  haptic();
+// ── POINTS CONFIRMATION ──
+function promptPointsAction(text, onConfirm) {
+  pendingPointsAction = onConfirm;
+  document.getElementById('points-confirm-text').textContent = text;
+  document.getElementById('points-confirm-modal').style.display = 'flex';
+}
+function confirmPointsAction() {
+  document.getElementById('points-confirm-modal').style.display = 'none';
+  if (pendingPointsAction) { pendingPointsAction(); pendingPointsAction = null; }
+}
+function cancelPointsAction() {
+  document.getElementById('points-confirm-modal').style.display = 'none';
+  pendingPointsAction = null;
 }
 
-function pointsIncrement(actId) {
-  if (!socket || !currentRoom) return;
-  socket.emit('points:increment', { roomCode: currentRoom, activityId: actId });
-  haptic();
+function pointsComplete(actId, desc) {
+  promptPointsAction(`Complete "${desc}"?`, () => {
+    if (!socket || !currentRoom) return;
+    socket.emit('points:complete', { roomCode: currentRoom, activityId: actId });
+    haptic();
+  });
 }
 
-function pointsDecrement(actId) {
-  if (!socket || !currentRoom) return;
-  socket.emit('points:decrement', { roomCode: currentRoom, activityId: actId });
-  haptic();
+function pointsIncrement(actId, desc) {
+  promptPointsAction(`Add 1 to "${desc}"?`, () => {
+    if (!socket || !currentRoom) return;
+    socket.emit('points:increment', { roomCode: currentRoom, activityId: actId });
+    haptic();
+  });
+}
+
+function pointsDecrement(actId, desc) {
+  promptPointsAction(`Remove 1 from "${desc}"?`, () => {
+    if (!socket || !currentRoom) return;
+    socket.emit('points:decrement', { roomCode: currentRoom, activityId: actId });
+    haptic();
+  });
+}
+
+function pointsUndo(actId, playerId, playerName, isCounter) {
+  const act = currentActivities.find(a => a.id === actId);
+  const desc = act ? act.description : actId;
+  const msg = isCounter
+    ? `Remove 1 from "${desc}" for ${playerName}?`
+    : `Undo completion of "${desc}" for ${playerName}?`;
+  promptPointsAction(msg, () => {
+    if (!socket || !currentRoom) return;
+    socket.emit('points:undo', { roomCode: currentRoom, activityId: actId, playerId });
+    haptic();
+  });
 }
 
 function pointsStartGame() {
@@ -3732,13 +3875,19 @@ function showPointsStandings(standings) {
   const emojis = ['🥇','🥈','🥉'];
   const listEl = document.getElementById('standings-list');
   if (listEl) {
-    listEl.innerHTML = standings.map((s, i) => `
-      <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;">
-        <span style="font-size:24px;">${emojis[i] || (i+1)}</span>
-        <span style="flex:1;font-size:15px;font-weight:600;">${esc(s.name)}</span>
-        <span style="font-family:var(--font-display);font-size:22px;color:var(--accent);">${s.points || 0} pts</span>
-      </div>
-    `).join('');
+    const hasCounters = currentActivities.some(a => a.isCounter);
+    const counterNote = hasCounters
+      ? '<div style="font-size:11px;color:var(--muted);text-align:center;margin-bottom:8px;">Counter task winners have been scored</div>'
+      : '';
+    listEl.innerHTML = counterNote + standings.map((s, i) => {
+      const highlight = i === 0 ? 'border-color:var(--accent);background:rgba(232,255,71,0.05);' : '';
+      return `
+        <div style="display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;${highlight}">
+          <span style="font-size:24px;">${emojis[i] || (i+1)}</span>
+          <span style="flex:1;font-size:15px;font-weight:600;">${esc(s.name)}</span>
+          <span style="font-family:var(--font-display);font-size:22px;color:var(--accent);">${s.points || 0} pts</span>
+        </div>`;
+    }).join('');
   }
   const overlay = document.getElementById('standings-overlay');
   if (overlay) overlay.style.display = 'flex';

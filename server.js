@@ -341,7 +341,8 @@ function autoTransferHost(room, roomCode, oldHostName) {
                     gameState: room.state || 'waiting',
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
-                    timerEnd: room.timerEnd || null
+                    timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 }
             });
         }
@@ -372,17 +373,38 @@ function getAllPlayers(room) {
     return players;
 }
 
-function computeLeaderboard(room) {
+function computeLeaderboard(room, isFinal = false) {
     if (!room.activities || !room.activities.length) return [];
     const allPlayers = getAllPlayers(room);
+
+    // Pre-compute counter winners (player(s) with highest count) for final scoring
+    const counterWinners = {};
+    if (isFinal) {
+        for (const act of room.activities) {
+            if (!act.isCounter) continue;
+            const counts = Object.values(act.completions || {});
+            const maxCount = counts.length ? Math.max(...counts) : 0;
+            if (maxCount > 0) {
+                counterWinners[act.id] = new Set(
+                    Object.entries(act.completions || {})
+                        .filter(([, c]) => c === maxCount)
+                        .map(([id]) => id)
+                );
+            }
+        }
+    }
+
     return allPlayers.map(p => {
         let points = 0;
         const completionMap = {};
         for (const act of room.activities) {
             const c = (act.completions || {})[p.id] || 0;
             if (act.isCounter) {
-                points += act.points * c;
                 completionMap[act.id] = c;
+                // Counter points only awarded at game end to the winner(s)
+                if (isFinal && counterWinners[act.id]?.has(p.id)) {
+                    points += act.points;
+                }
             } else if (c > 0) {
                 points += act.points;
                 if (act.firstCompletedBy === p.id) points += (act.firstBonus || 0);
@@ -747,7 +769,8 @@ io.on('connection', (socket) => {
                 chatHistory: room.chatHistory || [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
-                timerEnd: room.timerEnd || null
+                timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
             });
         } catch (err) {
             console.error('arbiter:join error:', err);
@@ -798,7 +821,8 @@ io.on('connection', (socket) => {
                     chatHistory: room.chatHistory || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
-                    timerEnd: room.timerEnd || null
+                    timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 });
 
                 io.to(code).emit('room:update', {
@@ -850,7 +874,8 @@ io.on('connection', (socket) => {
                 chatHistory: room.chatHistory || [],
                 gameMode: room.gameMode || 'bingo',
                 activities: room.activities || [],
-                timerEnd: room.timerEnd || null
+                timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
             });
 
             io.to(code).emit('room:update', {
@@ -889,7 +914,8 @@ io.on('connection', (socket) => {
                     chatHistory: room.chatHistory || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
-                    timerEnd: room.timerEnd || null
+                    timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 });
             } else {
                 const participant = room.participants[username];
@@ -909,7 +935,8 @@ io.on('connection', (socket) => {
                     chatHistory: room.chatHistory || [],
                     gameMode: room.gameMode || 'bingo',
                     activities: room.activities || [],
-                    timerEnd: room.timerEnd || null
+                    timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                 });
 
                 io.to(code).emit('room:update', {
@@ -1043,7 +1070,7 @@ io.on('connection', (socket) => {
 
             let standings;
             if (room.gameMode === 'points') {
-                standings = computeLeaderboard(room).map((p, i) => ({
+                standings = computeLeaderboard(room, true).map((p, i) => ({
                     name: p.name, place: i + 1, points: p.points
                 }));
             } else {
@@ -1164,8 +1191,12 @@ io.on('connection', (socket) => {
             if (!act || !act.isCounter) return;
             act.completions[playerId] = (act.completions[playerId] || 0) + 1;
             room.lastActivity = Date.now();
+            const name = room.participants[playerId]?.name || room.arbiter?.name || playerId;
+            const newCount = act.completions[playerId];
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+            io.to(code).emit('activity', { message: `${name} logged ${newCount}× "${act.description}"`, participantName: name });
+            sendPushToAll(room, 'Counter Updated', `${name}: ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:increment error:', err); }
     });
 
@@ -1183,9 +1214,55 @@ io.on('connection', (socket) => {
             if (current <= 0) return;
             act.completions[playerId] = current - 1;
             room.lastActivity = Date.now();
+            const name = room.participants[playerId]?.name || room.arbiter?.name || playerId;
+            const newCount = act.completions[playerId];
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+            io.to(code).emit('activity', { message: `${name} adjusted to ${newCount}× "${act.description}"`, participantName: name });
+            sendPushToAll(room, 'Counter Adjusted', `${name}: now ${newCount}× ${act.description}`, playerId, 'task');
         } catch (err) { console.error('points:decrement error:', err); }
+    });
+
+    socket.on('points:undo', ({ roomCode, activityId, playerId }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || room.gameMode !== 'points') return;
+            if (!room.arbiter || room.arbiter.socketId !== socket.id) {
+                return socket.emit('error', 'Only the host can undo player actions');
+            }
+            if (typeof playerId !== 'string') return;
+            const act = room.activities.find(a => a.id === activityId);
+            if (!act) return;
+
+            const playerName = room.participants[playerId]?.name || (room.arbiter?.username === playerId ? room.arbiter?.name : null) || playerId;
+            const hostName = room.arbiter?.name || 'Host';
+
+            if (act.isCounter) {
+                const current = act.completions[playerId] || 0;
+                if (current <= 0) return;
+                act.completions[playerId] = current - 1;
+                const newCount = act.completions[playerId];
+                room.lastActivity = Date.now();
+                const leaderboard = computeLeaderboard(room);
+                io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+                io.to(code).emit('activity', { message: `${hostName} adjusted "${act.description}" for ${playerName} to ${newCount}`, participantName: playerName });
+                sendPushToAll(room, 'Host Adjustment', `${hostName} adjusted ${playerName}'s count for "${act.description}"`, null, 'task');
+            } else {
+                if (!(act.completions[playerId] > 0)) return;
+                act.completions[playerId] = 0;
+                // Reset firstCompletedBy if this player was first
+                if (act.firstCompletedBy === playerId) {
+                    const remaining = Object.entries(act.completions).filter(([, c]) => c > 0);
+                    act.firstCompletedBy = remaining.length > 0 ? remaining[0][0] : null;
+                }
+                room.lastActivity = Date.now();
+                const leaderboard = computeLeaderboard(room);
+                io.to(code).emit('points:update', { activities: room.activities, leaderboard });
+                io.to(code).emit('activity', { message: `${hostName} undid "${act.description}" for ${playerName}`, participantName: playerName });
+                sendPushToAll(room, 'Host Undo', `${hostName} undid "${act.description}" for ${playerName}`, null, 'task');
+            }
+        } catch (err) { console.error('points:undo error:', err); }
     });
 
     socket.on('task:photo', ({ roomCode, cellIndex, imageData }) => {
@@ -1473,7 +1550,8 @@ io.on('connection', (socket) => {
                             partyName: room.partyName,
                             gameMode: room.gameMode || 'bingo',
                             activities: room.activities || [],
-                            timerEnd: room.timerEnd || null
+                            timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                         }
                     });
                 }
@@ -1496,7 +1574,8 @@ io.on('connection', (socket) => {
                             gameState: room.state || 'waiting',
                             gameMode: room.gameMode || 'bingo',
                             activities: room.activities || [],
-                            timerEnd: room.timerEnd || null
+                            timerEnd: room.timerEnd || null,
+                    leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
                         }
                     });
                 }
