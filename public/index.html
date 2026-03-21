@@ -2013,7 +2013,7 @@
       <div style="font-size:12px;color:var(--muted);text-align:center;">📷 Attach a photo (optional)</div>
       <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
         Choose Photo
-        <input id="points-confirm-photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onPointsConfirmPhotoSelected(this)" />
+        <input id="points-confirm-photo-input" type="file" accept="image/*" style="display:none;" onchange="onPointsConfirmPhotoSelected(this)" />
       </label>
       <img id="points-confirm-photo-preview" alt="preview" style="display:none;width:100%;border-radius:8px;max-height:130px;object-fit:cover;" />
     </div>
@@ -2032,7 +2032,7 @@
       <div style="font-size:12px;color:var(--muted);text-align:center;">📷 Attach a photo (optional)</div>
       <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
         Choose Photo
-        <input id="cell-confirm-photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onConfirmPhotoSelected(this)" />
+        <input id="cell-confirm-photo-input" type="file" accept="image/*" style="display:none;" onchange="onConfirmPhotoSelected(this)" />
       </label>
       <img id="cell-confirm-photo-preview" alt="preview" style="display:none;width:100%;border-radius:8px;max-height:130px;object-fit:cover;" />
     </div>
@@ -2051,7 +2051,7 @@
     <img id="photo-proof-preview" alt="preview" style="display:none;" />
     <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
       Choose Photo
-      <input id="photo-proof-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onPhotoSelected(this)" />
+      <input id="photo-proof-input" type="file" accept="image/*" style="display:none;" onchange="onPhotoSelected(this)" />
     </label>
     <div class="confirm-btns">
       <button class="btn btn-secondary btn-sm" onclick="cancelPhotoProof()">Cancel</button>
@@ -4452,20 +4452,25 @@ function viewPlayerBoard(playerId) {
     const cell = e.target.closest('.bingo-cell');
     if (!cell) return;
     const idx = parseInt(cell.dataset.photoIndex);
+    const isChecked = cell.classList.contains('checked');
+    const hasPhoto = cell.classList.contains('has-photo') && boardViewPhotos[idx];
 
-    // Photo lightbox for photo cells
-    if (cell.classList.contains('has-photo') && boardViewPhotos[idx]) {
-      openPhotoLightbox(boardViewPhotos[idx]);
-      return;
-    }
-
-    // Host can uncheck cells on a player's board
-    if (isCurrentlyArbiter && cell.classList.contains('checked') && !cell.classList.contains('free')) {
+    // Host moderation: uncheck takes priority over lightbox for checked cells
+    if (isCurrentlyArbiter && isChecked && !cell.classList.contains('free')) {
       boardViewTargetId = playerId;
       pendingCellIndex = idx;
       const promptText = player.card[idx] || '';
-      document.getElementById('cell-confirm-text').textContent = `Unmark "${promptText}" for ${player.name}?`;
+      const photoNote = hasPhoto ? ' (photo will also be removed)' : '';
+      document.getElementById('cell-confirm-text').textContent = `Unmark "${promptText}" for ${player.name}?${photoNote}`;
+      const photoSection = document.getElementById('cell-confirm-photo-section');
+      if (photoSection) photoSection.style.display = 'none';
       document.getElementById('cell-confirm-modal').style.display = 'flex';
+      return;
+    }
+
+    // Non-host or unchecked: open lightbox for photo cells
+    if (hasPhoto) {
+      openPhotoLightbox(boardViewPhotos[idx]);
     }
   };
 
