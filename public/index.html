@@ -471,6 +471,25 @@
       to { opacity: 1; transform: translateX(0); }
     }
 
+    .feed-photo-img {
+      width: 100%;
+      border-radius: 8px;
+      object-fit: cover;
+      max-height: 220px;
+      margin-top: 6px;
+      cursor: pointer;
+      display: block;
+    }
+    .feed-photo-placeholder {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+      text-align: center;
+      padding: 8px;
+      background: var(--surface2);
+      border-radius: 6px;
+    }
+
     .activity-time {
       font-size: 10px;
       color: var(--muted);
@@ -1988,8 +2007,16 @@
 
 <!-- ──────────────────────── POINTS CONFIRM MODAL ──────────────────────── -->
 <div id="points-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:850;align-items:center;justify-content:center;">
-  <div class="confirm-box" style="padding:24px 20px;gap:16px;">
+  <div class="confirm-box" style="padding:24px 20px;gap:14px;">
     <p id="points-confirm-text" style="font-size:15px;text-align:center;line-height:1.4;"></p>
+    <div id="points-confirm-photo-section" style="display:none;flex-direction:column;gap:8px;width:100%;">
+      <div style="font-size:12px;color:var(--muted);text-align:center;">📷 Attach a photo (optional)</div>
+      <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
+        Choose Photo
+        <input id="points-confirm-photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onPointsConfirmPhotoSelected(this)" />
+      </label>
+      <img id="points-confirm-photo-preview" alt="preview" style="display:none;width:100%;border-radius:8px;max-height:130px;object-fit:cover;" />
+    </div>
     <div class="confirm-btns">
       <button class="btn btn-secondary btn-sm" onclick="cancelPointsAction()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="confirmPointsAction()">Confirm</button>
@@ -1999,8 +2026,16 @@
 
 <!-- ──────────────────────── CELL CONFIRM MODAL ──────────────────────── -->
 <div id="cell-confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:800;align-items:center;justify-content:center;">
-  <div class="confirm-box" style="padding:24px 20px;gap:16px;">
+  <div class="confirm-box" style="padding:24px 20px;gap:14px;">
     <p id="cell-confirm-text" style="font-size:15px;">Mark this as completed?</p>
+    <div id="cell-confirm-photo-section" style="display:none;flex-direction:column;gap:8px;width:100%;">
+      <div style="font-size:12px;color:var(--muted);text-align:center;">📷 Attach a photo (optional)</div>
+      <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
+        Choose Photo
+        <input id="cell-confirm-photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="onConfirmPhotoSelected(this)" />
+      </label>
+      <img id="cell-confirm-photo-preview" alt="preview" style="display:none;width:100%;border-radius:8px;max-height:130px;object-fit:cover;" />
+    </div>
     <div class="confirm-btns">
       <button class="btn btn-secondary btn-sm" onclick="cancelCellConfirm()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="confirmCellCheck()">Confirm</button>
@@ -2011,7 +2046,7 @@
 <!-- ──────────────────────── PHOTO PROOF MODAL ──────────────────────── -->
 <div id="photo-proof-modal">
   <div id="photo-proof-inner">
-    <div style="font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;">📷 PHOTO REQUIRED</div>
+    <div id="photo-proof-title" style="font-family:var(--font-display);font-size:18px;letter-spacing:0.05em;">📷 PHOTO REQUIRED</div>
     <div id="photo-proof-prompt" style="font-size:14px;color:var(--muted);line-height:1.4;"></div>
     <img id="photo-proof-preview" alt="preview" style="display:none;" />
     <label class="btn btn-secondary btn-sm" style="text-align:center;cursor:pointer;">
@@ -2141,7 +2176,8 @@ let myChecked = new Set();
 let gridSize = 5;
 let arbiterId = 'arbiter-' + Math.random().toString(36).substring(2, 9);
 let prompts = [];
-let proofRequiredSet = new Set(); // setup screen: which prompts require photo proof
+let proofRequiredIndices = new Set(); // setup screen: indices of prompts that require photo proof
+let feedPhotoCache = {}; // photoId → base64 cache for feed photos
 let roomProofRequired = new Set(); // game screen: prompt texts requiring photo proof
 let activityLog = [];
 let arbiterCard = [];
@@ -2206,7 +2242,13 @@ function initSocket() {
   socket.on('error', (msg) => { hideLoading(); showToast('⚠️ ' + msg); });
   socket.on('activity', (data) => {
     if (currentGameMode === 'points') return; // points mode handles this itself
-    addActivity(data.message, false);
+    if (data.imageData && data.photoId) {
+      feedPhotoCache[data.photoId] = data.imageData;
+    }
+    addActivity(data.message, false, data.photoId);
+  });
+  socket.on('feed:photos:data', (data) => {
+    _updateFeedPhotoElements(data.photos || {});
   });
   socket.on('bingo', (data) => {
     if (currentGameMode === 'points') return;
@@ -2309,6 +2351,7 @@ function resetAndGoHome() {
   playerDetailOpenName = null;
   pendingJoinRequestId = null;
   pendingJoinRequestName = null;
+  feedPhotoCache = {};
   if (pointsTimerInterval) { clearInterval(pointsTimerInterval); pointsTimerInterval = null; }
   if (socket) {
     socket.disconnect();
@@ -2344,16 +2387,21 @@ function addPrompt() {
 }
 
 function removePrompt(idx) {
-  const removed = prompts.splice(idx, 1)[0];
-  proofRequiredSet.delete(removed);
+  prompts.splice(idx, 1);
+  // Re-map indices: remove idx, shift all higher indices down by 1
+  const updated = new Set();
+  proofRequiredIndices.forEach(i => {
+    if (i < idx) updated.add(i);
+    else if (i > idx) updated.add(i - 1);
+    // i === idx is removed
+  });
+  proofRequiredIndices = updated;
   renderPromptList();
 }
 
 function toggleProofRequired(idx) {
-  const p = prompts[idx];
-  if (!p) return;
-  if (proofRequiredSet.has(p)) proofRequiredSet.delete(p);
-  else proofRequiredSet.add(p);
+  if (proofRequiredIndices.has(idx)) proofRequiredIndices.delete(idx);
+  else proofRequiredIndices.add(idx);
   renderPromptList();
 }
 
@@ -2368,7 +2416,7 @@ function renderPromptList() {
     <div class="prompt-item">
       <span class="prompt-num">${i+1}</span>
       <span>${esc(p)}</span>
-      <button class="btn btn-ghost proof-toggle ${proofRequiredSet.has(p) ? 'proof-on' : ''}" onclick="toggleProofRequired(${i})" title="Require photo proof">📷</button>
+      <button class="btn btn-ghost proof-toggle ${proofRequiredIndices.has(i) ? 'proof-on' : ''}" onclick="toggleProofRequired(${i})" title="Require photo proof">📷</button>
       <button class="prompt-del" onclick="removePrompt(${i})">✕</button>
     </div>
   `).join('');
@@ -2402,7 +2450,7 @@ async function createRoom() {
 
   const body = {
     password, gridSize: sz, prompts,
-    proofRequired: [...proofRequiredSet],
+    proofRequired: [...proofRequiredIndices].map(i => prompts[i]).filter(Boolean),
     arbiterId, arbiterName: name,
     username: loggedInUser,
     partyName,
@@ -2512,6 +2560,8 @@ let pointsTimerEnd = null;
 let pointsTimerInterval = null;
 let pointsChatUnread = { 'pt-p': 0, 'pt-h': 0 };
 let pendingPointsAction = null;
+let pendingPointsPhotoActId = null; // activityId waiting for photo proof in points mode
+let pendingPointsOptionalPhotoData = null; // base64 for optional photo in points confirm modal
 
 function setSetupMode(mode) {
   setupGameMode = mode;
@@ -2535,7 +2585,7 @@ function addPointsActivity() {
   const pts = Math.max(1, parseInt(document.getElementById('act-points-input').value) || 10);
   const bonus = Math.max(0, parseInt(document.getElementById('act-bonus-input').value) || 0);
   const isCounter = document.getElementById('act-counter-toggle').checked;
-  pointsActivities.push({ description: desc, points: pts, firstBonus: bonus, isCounter });
+  pointsActivities.push({ description: desc, points: pts, firstBonus: bonus, isCounter, photoRequired: false });
   document.getElementById('act-desc-input').value = '';
   renderActivityBuilderList();
 }
@@ -2546,6 +2596,12 @@ document.getElementById('act-desc-input').addEventListener('keydown', e => {
 
 function removeActivity(idx) {
   pointsActivities.splice(idx, 1);
+  renderActivityBuilderList();
+}
+
+function toggleActivityPhoto(idx) {
+  if (!pointsActivities[idx]) return;
+  pointsActivities[idx].photoRequired = !pointsActivities[idx].photoRequired;
   renderActivityBuilderList();
 }
 
@@ -2561,6 +2617,7 @@ function renderActivityBuilderList() {
       <span class="prompt-num">${i+1}</span>
       <span style="flex:1;">${esc(a.description)}</span>
       <span style="font-size:11px;color:var(--accent);margin-right:4px;">${a.points}pts${a.firstBonus ? ' +'+a.firstBonus : ''}${a.isCounter ? ' 🔢' : ''}</span>
+      <button class="btn btn-ghost proof-toggle ${a.photoRequired ? 'proof-on' : ''}" onclick="toggleActivityPhoto(${i})" title="Require photo proof">📷</button>
       <button class="prompt-del" onclick="removeActivity(${i})">✕</button>
     </div>
   `).join('');
@@ -2571,6 +2628,7 @@ function openCreateGame() {
   // Reset setup state
   setupGameMode = 'bingo';
   pointsActivities = [];
+  proofRequiredIndices = new Set();
   document.getElementById('mode-btn-bingo').classList.add('active');
   document.getElementById('mode-btn-points').classList.remove('active');
   document.getElementById('mode-desc-bingo').style.display = '';
@@ -2651,13 +2709,15 @@ function toggleCell(index, isArbiter) {
   const promptText = card[index] || '';
   const isChecked = checked.has(index);
 
-  // If cell requires photo proof and not yet checked → open photo modal
+  // If cell requires photo proof and not yet checked → open photo modal (REQUIRED mode)
   if (!isChecked && roomProofRequired.has(promptText)) {
     pendingCellIndex = index;
+    document.getElementById('photo-proof-title').textContent = '📷 PHOTO REQUIRED';
     document.getElementById('photo-proof-prompt').textContent = promptText;
     document.getElementById('photo-proof-preview').src = '';
     document.getElementById('photo-proof-preview').style.display = 'none';
     document.getElementById('photo-proof-input').value = '';
+    document.getElementById('photo-proof-submit').disabled = true;
     document.getElementById('photo-proof-modal').style.display = 'flex';
     return;
   }
@@ -2675,8 +2735,18 @@ function toggleCell(index, isArbiter) {
   }
 
   pendingCellIndex = index;
+  pendingConfirmPhotoData = null;
   document.getElementById('cell-confirm-text').textContent =
     isChecked ? `Unmark "${promptText}"?` : `Mark "${promptText}" as completed?`;
+  // Show optional photo section only when completing (not unchecking) and player (not host)
+  const photoSection = document.getElementById('cell-confirm-photo-section');
+  if (!isChecked && !isArbiter && photoSection) {
+    photoSection.style.display = 'flex';
+    document.getElementById('cell-confirm-photo-preview').style.display = 'none';
+    document.getElementById('cell-confirm-photo-input').value = '';
+  } else if (photoSection) {
+    photoSection.style.display = 'none';
+  }
   document.getElementById('cell-confirm-modal').style.display = 'flex';
 }
 
@@ -2689,25 +2759,29 @@ function confirmCellCheck() {
       socket.emit('host:uncheck', { roomCode: currentRoom, targetId: boardViewTargetId, cellIndex: pendingCellIndex });
       boardViewTargetId = null;
       closePlayerBoardModal();
+    } else if (pendingConfirmPhotoData) {
+      // Complete with optional photo
+      socket.emit('task:photo', { roomCode: currentRoom, cellIndex: pendingCellIndex, imageData: pendingConfirmPhotoData });
     } else {
       socket.emit('cell:check', { roomCode: currentRoom, cellIndex: pendingCellIndex });
     }
   }
   pendingCellIndex = null;
+  pendingConfirmPhotoData = null;
 }
 
 function cancelCellConfirm() {
   document.getElementById('cell-confirm-modal').style.display = 'none';
   pendingCellIndex = null;
+  pendingConfirmPhotoData = null;
   boardViewTargetId = null;
 }
 
 // ── PHOTO PROOF ──
 let pendingPhotoData = null;
+let pendingConfirmPhotoData = null; // optional photo attached in cell-confirm-modal
 
-function onPhotoSelected(input) {
-  const file = input.files[0];
-  if (!file) return;
+function _resizePhoto(file, callback) {
   const reader = new FileReader();
   reader.onload = (e) => {
     const img = new Image();
@@ -2719,37 +2793,57 @@ function onPhotoSelected(input) {
       canvas.height = Math.round(img.height * scale);
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       const base64 = canvas.toDataURL('image/jpeg', 0.8);
-      // Reject if still too large (~500KB unencoded → ~680KB base64)
-      if (base64.length > 700000) {
-        showToast('Photo is too large even after resize. Try a different image.');
-        return;
-      }
-      pendingPhotoData = base64;
-      const preview = document.getElementById('photo-proof-preview');
-      preview.src = base64;
-      preview.style.display = 'block';
-      document.getElementById('photo-proof-submit').disabled = false;
+      if (base64.length > 700000) { showToast('Photo is too large even after resize. Try a different image.'); return; }
+      callback(base64);
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
-function submitPhotoProof() {
-  if (pendingCellIndex === null || !pendingPhotoData || !socket || !currentRoom) return;
-  socket.emit('task:photo', {
-    roomCode: currentRoom,
-    cellIndex: pendingCellIndex,
-    imageData: pendingPhotoData
+function onConfirmPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _resizePhoto(file, (base64) => {
+    pendingConfirmPhotoData = base64;
+    const preview = document.getElementById('cell-confirm-photo-preview');
+    preview.src = base64;
+    preview.style.display = 'block';
   });
+}
+
+function onPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _resizePhoto(file, (base64) => {
+    pendingPhotoData = base64;
+    const preview = document.getElementById('photo-proof-preview');
+    preview.src = base64;
+    preview.style.display = 'block';
+    document.getElementById('photo-proof-submit').disabled = false;
+  });
+}
+
+function submitPhotoProof() {
+  if (!pendingPhotoData || !socket || !currentRoom) return;
+  document.getElementById('photo-proof-modal').style.display = 'none';
+  if (pendingPointsPhotoActId !== null) {
+    // Points mode: submit activity completion with photo
+    socket.emit('points:complete', { roomCode: currentRoom, activityId: pendingPointsPhotoActId, imageData: pendingPhotoData });
+    haptic();
+    pendingPointsPhotoActId = null;
+  } else if (pendingCellIndex !== null) {
+    // Bingo mode: submit cell with photo
+    socket.emit('task:photo', { roomCode: currentRoom, cellIndex: pendingCellIndex, imageData: pendingPhotoData });
+  }
   pendingPhotoData = null;
   pendingCellIndex = null;
-  document.getElementById('photo-proof-modal').style.display = 'none';
 }
 
 function cancelPhotoProof() {
   pendingPhotoData = null;
   pendingCellIndex = null;
+  pendingPointsPhotoActId = null;
   document.getElementById('photo-proof-modal').style.display = 'none';
 }
 
@@ -2825,8 +2919,8 @@ function renderParticipants(containerId, participants, total, isArbiterView) {
 }
 
 // ── ACTIVITY FEED ──
-function addActivity(message, isBingo) {
-  activityLog.unshift({ message, isBingo, time: new Date() });
+function addActivity(message, isBingo, photoId) {
+  activityLog.unshift({ message, isBingo, time: new Date(), ...(photoId && { photoId }) });
   renderFeed('p-feed');
   renderFeed('a-feed');
   showToast(message);
@@ -2834,20 +2928,60 @@ function addActivity(message, isBingo) {
 
 function renderFeed(containerId) {
   const el = document.getElementById(containerId);
+  if (!el) return;
   if (activityLog.length === 0) {
     el.innerHTML = '<div class="empty-state">No activity yet!</div>';
     return;
   }
-  el.innerHTML = activityLog.slice(0, 50).map(item => `
-    <div class="activity-item ${item.isBingo ? 'bingo-event' : ''}">
-      ${esc(item.message)}
-      <div class="activity-time">${formatTime(item.time)}</div>
-    </div>
-  `).join('');
+  el.innerHTML = activityLog.slice(0, 50).map(item => {
+    let photoHtml = '';
+    if (item.photoId) {
+      const src = feedPhotoCache[item.photoId];
+      photoHtml = src
+        ? `<img class="feed-photo-img" src="${src}" data-photo-id="${esc(item.photoId)}" onclick="openPhotoLightbox(feedPhotoCache['${esc(item.photoId)}'])" />`
+        : `<div class="feed-photo-placeholder" data-photo-id="${esc(item.photoId)}">📷 Loading photo...</div>`;
+    }
+    return `
+      <div class="activity-item ${item.isBingo ? 'bingo-event' : ''}">
+        ${esc(item.message)}
+        ${photoHtml}
+        <div class="activity-time">${formatTime(item.time)}</div>
+      </div>`;
+  }).join('');
+  _requestUncachedPhotos();
 }
 
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function _requestUncachedPhotos() {
+  if (!socket || !currentRoom) return;
+  const needed = activityLog
+    .filter(e => e.photoId && !feedPhotoCache[e.photoId])
+    .map(e => e.photoId);
+  if (needed.length > 0) {
+    socket.emit('feed:photos:request', { roomCode: currentRoom, photoIds: needed });
+  }
+}
+
+function _updateFeedPhotoElements(photos) {
+  Object.entries(photos).forEach(([photoId, src]) => {
+    feedPhotoCache[photoId] = src;
+    document.querySelectorAll(`[data-photo-id="${photoId}"]`).forEach(el => {
+      if (el.tagName === 'IMG') {
+        el.src = src;
+      } else {
+        // Replace placeholder div with img
+        const img = document.createElement('img');
+        img.className = 'feed-photo-img';
+        img.src = src;
+        img.dataset.photoId = photoId;
+        img.onclick = () => openPhotoLightbox(src);
+        el.replaceWith(img);
+      }
+    });
+  });
 }
 
 // ── CHAT ──
@@ -3540,7 +3674,9 @@ function setupPointsPlayer(data) {
 
   socket.off('activity');
   socket.on('activity', (e) => {
-    activityLog.unshift({ ...e, time: new Date() });
+    if (e.imageData && e.photoId) feedPhotoCache[e.photoId] = e.imageData;
+    const { imageData, ...entry } = e;
+    activityLog.unshift({ ...entry, time: new Date() });
     renderPointsFeed('pt-p');
   });
 
@@ -3628,7 +3764,9 @@ function setupPointsHost(data) {
 
   socket.off('activity');
   socket.on('activity', (e) => {
-    activityLog.unshift({ ...e, time: new Date() });
+    if (e.imageData && e.photoId) feedPhotoCache[e.photoId] = e.imageData;
+    const { imageData, ...entry } = e;
+    activityLog.unshift({ ...entry, time: new Date() });
     renderPointsFeed('pt-h');
   });
 
@@ -3717,11 +3855,12 @@ function renderPointsActivities(prefix, isHost) {
       `;
     } else {
       // Standard: single COMPLETE button with confirmation
+      const photoLabel = act.photoRequired ? ' 📷' : '';
       controls = `
         <button class="activity-complete-btn"
-          onclick="pointsComplete('${esc(act.id)}','${esc(act.description)}')"
+          onclick="pointsComplete('${esc(act.id)}','${esc(act.description)}',${!!act.photoRequired})"
           ${isDone || !active ? 'disabled' : ''}>
-          ${isDone ? '✓ DONE' : 'COMPLETE'}
+          ${isDone ? '✓ DONE' : `COMPLETE${photoLabel}`}
         </button>
       `;
     }
@@ -3824,12 +3963,21 @@ function renderPointsFeed(prefix) {
     container.innerHTML = '<div class="empty-state">No activity yet!</div>';
     return;
   }
-  container.innerHTML = activityLog.slice(0, 50).map(item =>
-    `<div class="activity-item">
+  container.innerHTML = activityLog.slice(0, 50).map(item => {
+    let photoHtml = '';
+    if (item.photoId) {
+      const src = feedPhotoCache[item.photoId];
+      photoHtml = src
+        ? `<img class="feed-photo-img" src="${src}" data-photo-id="${esc(item.photoId)}" onclick="openPhotoLightbox(feedPhotoCache['${esc(item.photoId)}'])" />`
+        : `<div class="feed-photo-placeholder" data-photo-id="${esc(item.photoId)}">📷 Loading photo...</div>`;
+    }
+    return `<div class="activity-item">
       ${esc(item.message)}
+      ${photoHtml}
       <div class="activity-time">${item.time ? formatTime(new Date(item.time)) : ''}</div>
-    </div>`
-  ).join('');
+    </div>`;
+  }).join('');
+  _requestUncachedPhotos();
 }
 
 function renderPointsChat(prefix) {
@@ -3928,26 +4076,63 @@ function updatePointsTimerBar(prefix) {
 }
 
 // ── POINTS CONFIRMATION ──
-function promptPointsAction(text, onConfirm) {
+function promptPointsAction(text, onConfirm, showPhotoOption) {
   pendingPointsAction = onConfirm;
+  pendingPointsOptionalPhotoData = null;
   document.getElementById('points-confirm-text').textContent = text;
+  const photoSection = document.getElementById('points-confirm-photo-section');
+  if (photoSection) {
+    photoSection.style.display = showPhotoOption ? 'flex' : 'none';
+    if (showPhotoOption) {
+      document.getElementById('points-confirm-photo-preview').style.display = 'none';
+      document.getElementById('points-confirm-photo-input').value = '';
+    }
+  }
   document.getElementById('points-confirm-modal').style.display = 'flex';
+}
+function onPointsConfirmPhotoSelected(input) {
+  const file = input.files[0];
+  if (!file) return;
+  _resizePhoto(file, (base64) => {
+    pendingPointsOptionalPhotoData = base64;
+    const preview = document.getElementById('points-confirm-photo-preview');
+    preview.src = base64;
+    preview.style.display = 'block';
+  });
 }
 function confirmPointsAction() {
   document.getElementById('points-confirm-modal').style.display = 'none';
   if (pendingPointsAction) { pendingPointsAction(); pendingPointsAction = null; }
+  pendingPointsOptionalPhotoData = null;
 }
 function cancelPointsAction() {
   document.getElementById('points-confirm-modal').style.display = 'none';
   pendingPointsAction = null;
+  pendingPointsOptionalPhotoData = null;
 }
 
-function pointsComplete(actId, desc) {
-  promptPointsAction(`Complete "${desc}"?`, () => {
-    if (!socket || !currentRoom) return;
-    socket.emit('points:complete', { roomCode: currentRoom, activityId: actId });
-    haptic();
-  });
+function pointsComplete(actId, desc, photoRequired) {
+  pendingPointsPhotoActId = actId;
+  if (photoRequired) {
+    // Show photo modal first (required)
+    pendingPhotoData = null;
+    document.getElementById('photo-proof-title').textContent = '📷 PHOTO REQUIRED';
+    document.getElementById('photo-proof-prompt').textContent = desc;
+    document.getElementById('photo-proof-preview').src = '';
+    document.getElementById('photo-proof-preview').style.display = 'none';
+    document.getElementById('photo-proof-input').value = '';
+    document.getElementById('photo-proof-submit').disabled = true;
+    document.getElementById('photo-proof-modal').style.display = 'flex';
+  } else {
+    // Standard confirm with optional photo section
+    promptPointsAction(`Complete "${desc}"?`, () => {
+      if (!socket || !currentRoom) return;
+      const imgData = pendingPointsOptionalPhotoData;
+      socket.emit('points:complete', { roomCode: currentRoom, activityId: actId, ...(imgData && { imageData: imgData }) });
+      pendingPointsPhotoActId = null;
+      haptic();
+    }, true /* showPhotoOption */);
+  }
 }
 
 function pointsIncrement(actId, desc) {

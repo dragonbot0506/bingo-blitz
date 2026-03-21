@@ -383,7 +383,9 @@ function pushActivityLog(room, entry) {
 
 // Persists to activityLog AND broadcasts to room
 function emitActivity(roomCode, room, data) {
-    pushActivityLog(room, data);
+    // Strip imageData before storing in log (keep log small; photos served on demand)
+    const { imageData, ...logEntry } = data;
+    pushActivityLog(room, logEntry);
     io.to(roomCode).emit('activity', data);
 }
 
@@ -529,6 +531,7 @@ app.post('/api/rooms', (req, res) => {
                 points: Math.max(1, Math.min(9999, parseInt(a.points) || 10)),
                 firstBonus: Math.max(0, Math.min(9999, parseInt(a.firstBonus) || 0)),
                 isCounter: !!a.isCounter,
+                photoRequired: !!a.photoRequired,
                 completions: {},
                 firstCompletedBy: null
             })).filter(a => a.description)
@@ -558,6 +561,7 @@ app.post('/api/rooms', (req, res) => {
             placementCounter: 0,
             chatHistory: [],
             activityLog: [],
+            feedPhotos: {},
             createdAt: Date.now(),
             lastActivity: Date.now(),
             gameMode: mode,
@@ -1190,7 +1194,7 @@ io.on('connection', (socket) => {
     });
 
     // ── POINTS MODE HANDLERS ──
-    socket.on('points:complete', ({ roomCode, activityId }) => {
+    socket.on('points:complete', ({ roomCode, activityId, imageData }) => {
         try {
             const code = String(roomCode || '').toUpperCase();
             const room = rooms[code];
@@ -1207,7 +1211,19 @@ io.on('connection', (socket) => {
             const name = room.participants[playerId]?.name || room.arbiter?.name || playerId;
             const leaderboard = computeLeaderboard(room);
             io.to(code).emit('points:update', { activities: room.activities, leaderboard });
-            const completeMsg = { message: `${name} completed "${act.description}"!`, participantName: name };
+            // Handle optional photo
+            let photoId = null;
+            if (typeof imageData === 'string' && imageData.length > 0 && imageData.length <= 700000) {
+                photoId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+                room.feedPhotos = room.feedPhotos || {};
+                room.feedPhotos[photoId] = imageData;
+            }
+            const msgSuffix = photoId ? ' 📷' : '!';
+            const completeMsg = {
+                message: `${name} completed "${act.description}"${msgSuffix}`,
+                participantName: name,
+                ...(photoId && { photoId, imageData })
+            };
             emitActivity(code, room, completeMsg);
             sendPushToAll(room, 'Activity Completed!', `${name} completed "${act.description}"`, playerId, 'task');
         } catch (err) { console.error('points:complete error:', err); }
@@ -1323,19 +1339,23 @@ io.on('connection', (socket) => {
             if (!Number.isInteger(cellIndex) || cellIndex < 0 || cellIndex >= participant.card.length) return;
 
             const cellText = participant.card[cellIndex];
-            if (!(room.proofRequired || []).includes(cellText)) return;
 
             // Validate base64 size (≤500KB unencoded ~ ≤680KB base64)
-            if (typeof imageData !== 'string' || imageData.length > 700000) {
+            if (typeof imageData !== 'string' || imageData.length > 700000 || imageData.length === 0) {
                 return socket.emit('error', 'Photo is too large. Please use a smaller image.');
             }
 
+            // Store photo per-participant (for board view) and in feedPhotos (for feed persistence)
+            const photoId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+            room.feedPhotos = room.feedPhotos || {};
+            room.feedPhotos[photoId] = imageData;
             participant.photos = participant.photos || {};
             participant.photos[cellIndex] = imageData;
 
-            // Check cell normally (always mark as checked, not toggle)
+            // Check cell (mark as completed if not already)
             const checkedSet = new Set(participant.checked);
-            if (!checkedSet.has(cellIndex)) {
+            const alreadyChecked = checkedSet.has(cellIndex);
+            if (!alreadyChecked) {
                 checkedSet.add(cellIndex);
                 participant.checked = [...checkedSet];
                 room.lastActivity = Date.now();
@@ -1345,8 +1365,8 @@ io.on('connection', (socket) => {
 
                 socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
 
-                const message = `${participant.name} Completed: ${cellText} 📷`;
-                emitActivity(code, room, { message, participantName: participant.name, prompt: cellText });
+                const message = `${participant.name} completed: ${cellText} 📷`;
+                emitActivity(code, room, { message, participantName: participant.name, prompt: cellText, photoId, imageData });
                 sendPushToAll(room, 'Task Completed!', message, userInfo.username, 'task');
 
                 if (!hadBingo && participant.hasBingo) {
@@ -1358,6 +1378,9 @@ io.on('connection', (socket) => {
                     sendPushToAll(room, 'PIngo!', bingoMsg, userInfo.username, 'bingo');
                 }
             } else {
+                // Cell already checked — photo added to an already-completed cell
+                const message = `${participant.name} added photo: ${cellText} 📷`;
+                emitActivity(code, room, { message, participantName: participant.name, prompt: cellText, photoId, imageData });
                 socket.emit('cell:updated', { checked: participant.checked, hasBingo: participant.hasBingo });
             }
 
@@ -1388,6 +1411,19 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error('photo:request error:', err);
         }
+    });
+
+    socket.on('feed:photos:request', ({ roomCode, photoIds }) => {
+        try {
+            const code = String(roomCode || '').toUpperCase();
+            const room = rooms[code];
+            if (!room || !room.feedPhotos || !Array.isArray(photoIds)) return;
+            const photos = {};
+            photoIds.forEach(id => {
+                if (typeof id === 'string' && room.feedPhotos[id]) photos[id] = room.feedPhotos[id];
+            });
+            socket.emit('feed:photos:data', { photos });
+        } catch (err) { console.error('feed:photos:request error:', err); }
     });
 
     socket.on('chat:message', ({ roomCode, message }) => {
