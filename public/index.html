@@ -2043,7 +2043,7 @@
 </div>
 
 <!-- ──────────────────────── JOIN REQUEST MODAL (host sees) ──────────────────────── -->
-<div id="join-request-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:700;align-items:center;justify-content:center;">
+<div id="join-request-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:960;align-items:center;justify-content:center;">
   <div class="confirm-box">
     <p style="font-family:var(--font-display);font-size:18px;color:var(--accent);">JOIN REQUEST</p>
     <p id="join-request-text" style="font-size:15px;"></p>
@@ -2055,7 +2055,7 @@
 </div>
 
 <!-- ──────────────────────── JOIN PENDING MODAL (player sees) ──────────────────────── -->
-<div id="join-pending-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:700;align-items:center;justify-content:center;">
+<div id="join-pending-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:960;align-items:center;justify-content:center;">
   <div class="confirm-box">
     <p style="font-family:var(--font-display);font-size:18px;color:var(--accent);">REQUEST SENT</p>
     <p id="join-pending-text" style="font-size:14px;color:var(--muted);text-align:center;">Waiting for host to approve your rejoin request...</p>
@@ -3427,6 +3427,12 @@ function enterApp(activeRoom) {
 }
 
 function handleParticipantJoined(data) {
+  // Auto-close rejoin-pending modal if open (host just approved the request)
+  const pendingModal = document.getElementById('join-pending-modal');
+  if (pendingModal && pendingModal.style.display !== 'none') {
+    closeJoinPendingModal();
+    showToast('Request approved — welcome back!');
+  }
   hideLoading();
   isCurrentlyArbiter = false;
   currentRoom = data.roomCode;
@@ -4146,8 +4152,8 @@ function handleJoinRequest(data) {
   pendingJoinRequestName = data.playerName;
   document.getElementById('join-request-text').textContent = `${data.playerName} wants to rejoin the party.`;
   document.getElementById('join-request-modal').style.display = 'flex';
-  // Also show in-screen notification for points host
   renderJoinRequestBanner();
+  showToast(`⚠️ ${data.playerName} is requesting to rejoin`);
 }
 
 function approveJoinRequest() {

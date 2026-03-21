@@ -812,12 +812,20 @@ io.on('connection', (socket) => {
                 const existing = room.participants[participantKey];
                 // Kicked players submit a join request to the host
                 if (existing.kicked) {
+                    const playerName = existing.name || name || participantKey;
                     room.pendingJoinRequests = room.pendingJoinRequests || {};
-                    room.pendingJoinRequests[participantKey] = { socketId: socket.id, name: existing.name || name || participantKey };
+                    room.pendingJoinRequests[participantKey] = { socketId: socket.id, name: playerName };
                     socket.emit('join:pending', { message: 'Join request sent. Waiting for host approval...' });
                     if (room.arbiter && room.arbiter.socketId) {
                         const hostSock = io.sockets.sockets.get(room.arbiter.socketId);
-                        if (hostSock) hostSock.emit('join:request', { playerId: participantKey, playerName: existing.name || name || participantKey });
+                        if (hostSock) hostSock.emit('join:request', { playerId: participantKey, playerName });
+                    }
+                    // Push notification to host if app is closed/backgrounded
+                    if (room.arbiter?.pushSubscription) {
+                        webpush.sendNotification(
+                            room.arbiter.pushSubscription,
+                            JSON.stringify({ title: 'Rejoin Request', body: `${playerName} wants to rejoin ${room.partyName || 'the party'}`, type: 'join' })
+                        ).catch(() => {});
                     }
                     return;
                 }
