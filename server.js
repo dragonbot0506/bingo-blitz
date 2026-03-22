@@ -289,18 +289,13 @@ function sanitizeParticipants(participants) {
         }));
 }
 
-// Transfers host role to a random available participant, or deletes room if none remain.
+// Transfers host role to a random available participant. Room persists even if no participants remain.
 function autoTransferHost(room, roomCode, oldHostName) {
     const eligible = Object.values(room.participants).filter(p => !p.kicked);
     const nextParticipant = eligible.length ? shuffleArray(eligible)[0] : null;
 
     if (!nextParticipant) {
-        // No players left — delete the room
-        io.to(roomCode).emit('room:deleted');
-        for (const pId of Object.keys(room.participants)) {
-            if (users[pId]) users[pId].activeRoom = null;
-        }
-        delete rooms[roomCode];
+        // No eligible participants to promote — leave the room intact
         return;
     }
 
@@ -1728,33 +1723,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// =======================
-// ROOM CLEANUP
-// =======================
-
-const ROOM_IDLE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-
-setInterval(() => {
-    const now = Date.now();
-    for (const [code, room] of Object.entries(rooms)) {
-        const age = now - (room.lastActivity || room.createdAt);
-        if (age < ROOM_IDLE_TTL_MS) continue;
-
-        // Only clean up if all sockets are disconnected (no active players)
-        const arbiterOnline = room.arbiter && room.arbiter.socketId;
-        const anyParticipantOnline = Object.values(room.participants).some(p => p.socketId);
-        if (arbiterOnline || anyParticipantOnline) continue;
-
-        console.log(`[cleanup] Deleting idle room ${code} (idle ${Math.round(age / 60000)}m)`);
-        for (const pId of Object.keys(room.participants)) {
-            if (users[pId]) users[pId].activeRoom = null;
-        }
-        if (room.arbiter?.username && users[room.arbiter.username]) {
-            users[room.arbiter.username].activeRoom = null;
-        }
-        delete rooms[code];
-    }
-}, 30 * 60 * 1000); // run every 30 minutes
 
 // =======================
 // START SERVER
