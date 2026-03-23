@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const path = require('path');
+const db = require('./db');
 
 const app = express();
 const server = http.createServer(app);
@@ -18,18 +19,17 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 // =======================
-// AUTH - In-memory stores
+// AUTH
 // =======================
-const users = {};      // { username: { username, passwordHash, activeRoom, settings, usernameChanged } }
-const sessions = {};   // { sessionToken: username }
 const socketToUser = {}; // { socketId: { username, roomCode } }
+const activeRooms = {}; // { username: { roomCode, isArbiter } }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
     const token = req.cookies?.session;
-    if (!token || !sessions[token]) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
-    req.username = sessions[token];
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    const session = await db.getSession(token);
+    if (!session) return res.status(401).json({ error: 'Not authenticated' });
+    req.username = session.username;
     next();
 }
 
@@ -45,18 +45,14 @@ app.post('/api/signup', async (req, res) => {
     if (password.length < 4) {
         return res.status(400).json({ error: 'Password must be at least 4 characters' });
     }
-    if (users[trimmed]) {
+    if (await db.userExists(trimmed)) {
         return res.status(409).json({ error: 'Username already taken' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    users[trimmed] = {
-        username: trimmed, passwordHash, activeRoom: null,
-        usernameChanged: false,
-        settings: { notifications: true, autoConfirm: false, haptic: true }
-    };
+    await db.createUser(trimmed, passwordHash);
 
     const token = crypto.randomUUID();
-    sessions[token] = trimmed;
+    await db.createSession(token, trimmed);
     res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
     res.json({ username: trimmed, activeRoom: null });
 });
@@ -67,7 +63,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ error: 'Username and password required' });
     }
     const trimmed = username.trim().toLowerCase();
-    const user = users[trimmed];
+    const user = await db.getUser(trimmed);
     if (!user) {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
@@ -76,72 +72,74 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ error: 'Invalid username or password' });
     }
     const token = crypto.randomUUID();
-    sessions[token] = trimmed;
+    await db.createSession(token, trimmed);
     res.cookie('session', token, { httpOnly: true, maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
     res.json({ username: trimmed, activeRoom: getUserActiveRoom(trimmed) });
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', async (req, res) => {
     const token = req.cookies?.session;
-    if (token) delete sessions[token];
+    if (token) await db.deleteSession(token);
     res.clearCookie('session');
     res.json({ success: true });
 });
 
 // ── USER SETTINGS ──
-app.get('/api/user-settings', requireAuth, (req, res) => {
-    const user = users[req.username];
+app.get('/api/user-settings', requireAuth, async (req, res) => {
+    const user = await db.getUser(req.username);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const s = user.settings || { notifications: true, autoConfirm: false, haptic: true };
     res.json({ ...s, usernameChanged: user.usernameChanged || false });
 });
 
-app.post('/api/user-settings', requireAuth, (req, res) => {
-    const user = users[req.username];
+app.post('/api/user-settings', requireAuth, async (req, res) => {
+    const user = await db.getUser(req.username);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    if (!user.settings) user.settings = { notifications: true, autoConfirm: false, haptic: true };
+    const currentSettings = user.settings || { notifications: true, autoConfirm: false, haptic: true };
     const { notifications, autoConfirm, haptic } = req.body;
-    if (typeof notifications === 'boolean') user.settings.notifications = notifications;
-    if (typeof autoConfirm === 'boolean') user.settings.autoConfirm = autoConfirm;
-    if (typeof haptic === 'boolean') user.settings.haptic = haptic;
+    if (typeof notifications === 'boolean') currentSettings.notifications = notifications;
+    if (typeof autoConfirm === 'boolean') currentSettings.autoConfirm = autoConfirm;
+    if (typeof haptic === 'boolean') currentSettings.haptic = haptic;
+    await db.updateUser(req.username, { settings: currentSettings });
     res.json({ success: true });
 });
 
 app.post('/api/change-password', requireAuth, async (req, res) => {
-    const user = users[req.username];
+    const user = await db.getUser(req.username);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) return res.status(400).json({ error: 'All fields required' });
     if (newPassword.length < 4) return res.status(400).json({ error: 'New password must be at least 4 characters' });
     const match = await bcrypt.compare(currentPassword, user.passwordHash);
     if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
-    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await db.updateUser(req.username, { passwordHash: newHash });
     res.json({ success: true });
 });
 
 app.post('/api/change-username', requireAuth, async (req, res) => {
     const oldName = req.username;
-    const user = users[oldName];
+    const user = await db.getUser(oldName);
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.usernameChanged) return res.status(400).json({ error: 'Username can only be changed once' });
     const trimmed = String(req.body.newUsername || '').trim().toLowerCase();
     if (trimmed.length < 3) return res.status(400).json({ error: 'Username must be at least 3 characters' });
     if (trimmed === oldName) return res.status(400).json({ error: 'That is already your username' });
-    if (users[trimmed]) return res.status(409).json({ error: 'Username already taken' });
+    if (await db.userExists(trimmed)) return res.status(409).json({ error: 'Username already taken' });
 
-    users[trimmed] = { ...user, username: trimmed, usernameChanged: true };
-    delete users[oldName];
+    await db.renameUser(oldName, trimmed, { usernameChanged: true });
 
-    // Update sessions
-    for (const token of Object.keys(sessions)) {
-        if (sessions[token] === oldName) sessions[token] = trimmed;
-    }
     // Update socket mappings
     for (const id of Object.keys(socketToUser)) {
         if (socketToUser[id].username === oldName) socketToUser[id].username = trimmed;
     }
+    // Update activeRooms
+    if (activeRooms[oldName]) {
+        activeRooms[trimmed] = activeRooms[oldName];
+        delete activeRooms[oldName];
+    }
     // Update active room references
-    for (const room of Object.values(rooms)) {
+    for (const [code, room] of Object.entries(rooms)) {
         if (room.arbiter && room.arbiter.username === oldName) {
             room.arbiter.username = trimmed;
             room.arbiter.name = trimmed;
@@ -152,13 +150,14 @@ app.post('/api/change-username', requireAuth, async (req, res) => {
             room.participants[trimmed] = p;
             delete room.participants[oldName];
         }
+        persistRoom(code);
     }
     res.json({ username: trimmed });
 });
 
 app.post('/api/delete-account', requireAuth, async (req, res) => {
     const username = req.username;
-    const user = users[username];
+    const user = await db.getUser(username);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const { password } = req.body;
     if (!password) return res.status(400).json({ error: 'Password required' });
@@ -166,43 +165,44 @@ app.post('/api/delete-account', requireAuth, async (req, res) => {
     if (!match) return res.status(401).json({ error: 'Incorrect password' });
 
     // Remove from active room
-    if (user.activeRoom) {
-        const room = rooms[user.activeRoom.roomCode];
+    const userActiveRoom = activeRooms[username];
+    if (userActiveRoom) {
+        const room = rooms[userActiveRoom.roomCode];
         if (room) {
-            if (user.activeRoom.isArbiter) {
-                io.to(user.activeRoom.roomCode).emit('kicked', { reason: 'The host deleted their account.' });
-                delete rooms[user.activeRoom.roomCode];
+            if (userActiveRoom.isArbiter) {
+                io.to(userActiveRoom.roomCode).emit('kicked', { reason: 'The host deleted their account.' });
+                delete rooms[userActiveRoom.roomCode];
+                persistRoom(userActiveRoom.roomCode);
             } else {
                 delete room.participants[username];
-                io.to(user.activeRoom.roomCode).emit('room:update', { participants: getAllPlayers(room) });
+                io.to(userActiveRoom.roomCode).emit('room:update', { participants: getAllPlayers(room) });
+                persistRoom(userActiveRoom.roomCode);
             }
         }
+        delete activeRooms[username];
     }
-    // Revoke all sessions
-    for (const token of Object.keys(sessions)) {
-        if (sessions[token] === username) delete sessions[token];
-    }
-    delete users[username];
+    // Delete user (cascade deletes sessions)
+    await db.deleteUser(username);
     res.clearCookie('session');
     res.json({ success: true });
 });
 
-app.get('/api/me', (req, res) => {
+app.get('/api/me', async (req, res) => {
     const token = req.cookies?.session;
-    if (!token || !sessions[token]) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
-    const username = sessions[token];
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    const session = await db.getSession(token);
+    if (!session) return res.status(401).json({ error: 'Not authenticated' });
+    const username = session.username;
     res.json({ username, activeRoom: getUserActiveRoom(username) });
 });
 
 function getUserActiveRoom(username) {
-    const user = users[username];
-    if (!user || !user.activeRoom) return null;
-    const { roomCode, isArbiter } = user.activeRoom;
+    const ar = activeRooms[username];
+    if (!ar) return null;
+    const { roomCode, isArbiter } = ar;
     const room = rooms[roomCode];
     if (!room) {
-        user.activeRoom = null;
+        delete activeRooms[username];
         return null;
     }
     return { roomCode, isArbiter };
@@ -232,8 +232,16 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
     console.log('VAPID_PRIVATE_KEY=' + vapidKeys.privateKey);
 }
 
-// In-memory store
+// In-memory store (rooms cached in memory, synced to DB)
 const rooms = {};
+
+function persistRoom(code) {
+    if (rooms[code]) {
+        db.saveRoom(code, rooms[code]).catch(err => console.error('Room save error:', err));
+    } else {
+        db.deleteRoom(code).catch(err => console.error('Room delete error:', err));
+    }
+}
 
 // =======================
 // UTIL FUNCTIONS
@@ -312,9 +320,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
     };
     delete room.participants[nextParticipant.id];
 
-    if (users[nextParticipant.id]) {
-        users[nextParticipant.id].activeRoom = { roomCode, isArbiter: true };
-    }
+    activeRooms[nextParticipant.id] = { roomCode, isArbiter: true };
     if (nextParticipant.socketId) {
         socketToUser[nextParticipant.socketId] = { username: nextParticipant.id, roomCode };
     }
@@ -351,6 +357,7 @@ function autoTransferHost(room, roomCode, oldHostName) {
 
     io.to(roomCode).emit('room:update', { participants: getAllPlayers(room) });
     emitActivity(roomCode, room, { message: msg, participantName: nextParticipant.name });
+    persistRoom(roomCode);
 }
 
 function getAllPlayers(room) {
@@ -552,6 +559,7 @@ app.post('/api/rooms', (req, res) => {
         };
 
         console.log('ROOM CREATED:', roomCode);
+        persistRoom(roomCode);
 
         return res.json({ roomCode });
     } catch (err) {
@@ -560,9 +568,13 @@ app.post('/api/rooms', (req, res) => {
     }
 });
 
-app.get('/api/rooms', (req, res) => {
+app.get('/api/rooms', async (req, res) => {
     const token = req.cookies?.session;
-    const username = (token && sessions[token]) ? sessions[token] : null;
+    let username = null;
+    if (token) {
+        const session = await db.getSession(token);
+        if (session) username = session.username;
+    }
 
     const list = Object.entries(rooms).map(([code, room]) => {
         let userStatus = 'none';
@@ -645,20 +657,20 @@ app.get('/api/my-rooms', requireAuth, (req, res) => {
     res.json(myRooms);
 });
 
-app.post('/api/leave-room', (req, res) => {
+app.post('/api/leave-room', async (req, res) => {
     const token = req.cookies?.session;
-    if (!token || !sessions[token]) {
-        return res.status(401).json({ error: 'Not authenticated' });
-    }
-    const username = sessions[token];
-    const user = users[username];
-    if (!user || !user.activeRoom) {
+    if (!token) return res.status(401).json({ error: 'Not authenticated' });
+    const session = await db.getSession(token);
+    if (!session) return res.status(401).json({ error: 'Not authenticated' });
+    const username = session.username;
+    const userActiveRoom = activeRooms[username];
+    if (!userActiveRoom) {
         return res.json({ success: true });
     }
 
-    const { roomCode, isArbiter } = user.activeRoom;
+    const { roomCode, isArbiter } = userActiveRoom;
     const room = rooms[roomCode];
-    user.activeRoom = null;
+    delete activeRooms[username];
 
     if (room) {
         if (isArbiter) {
@@ -671,6 +683,7 @@ app.post('/api/leave-room', (req, res) => {
             room.participants[username].socketId = null;
             emitActivity(roomCode, room, { message: `${name} left the game`, participantName: name });
         }
+        persistRoom(roomCode);
     }
 
     res.json({ success: true });
@@ -680,7 +693,7 @@ app.post('/api/delete-room', requireAuth, async (req, res) => {
     try {
         const { roomCode, password } = req.body;
         const username = req.username;
-        const user = users[username];
+        const user = await db.getUser(username);
 
         if (!password) return res.status(400).json({ error: 'Password required' });
 
@@ -705,13 +718,14 @@ app.post('/api/delete-room', requireAuth, async (req, res) => {
 
         // Clear all users' activeRoom
         for (const pId of Object.keys(room.participants)) {
-            if (users[pId]) users[pId].activeRoom = null;
+            delete activeRooms[pId];
         }
-        if (room.arbiter.username && users[room.arbiter.username]) {
-            users[room.arbiter.username].activeRoom = null;
+        if (room.arbiter.username) {
+            delete activeRooms[room.arbiter.username];
         }
 
         delete rooms[code];
+        persistRoom(code);
         res.json({ success: true });
     } catch (err) {
         console.error('DELETE ROOM ERROR:', err);
@@ -748,8 +762,8 @@ io.on('connection', (socket) => {
             }
 
             // Set user's active room
-            if (username && users[username]) {
-                users[username].activeRoom = { roomCode: code, isArbiter: true };
+            if (username) {
+                activeRooms[username] = { roomCode: code, isArbiter: true };
             }
 
             socket.join(code);
@@ -771,6 +785,7 @@ io.on('connection', (socket) => {
                 timerEnd: room.timerEnd || null,
                 leaderboard: room.gameMode === 'points' ? computeLeaderboard(room) : []
             });
+            persistRoom(code);
         } catch (err) {
             console.error('arbiter:join error:', err);
             socket.emit('error', 'Failed to join as arbiter');
@@ -818,8 +833,8 @@ io.on('connection', (socket) => {
                 existing.socketId = socket.id;
                 socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
-                if (username && users[username]) {
-                    users[username].activeRoom = { roomCode: code, isArbiter: false };
+                if (username) {
+                    activeRooms[username] = { roomCode: code, isArbiter: false };
                 }
 
                 socket.join(code);
@@ -871,8 +886,8 @@ io.on('connection', (socket) => {
 
             socketToUser[socket.id] = { username: participantKey, roomCode: code };
 
-            if (username && users[username]) {
-                users[username].activeRoom = { roomCode: code, isArbiter: false };
+            if (username) {
+                activeRooms[username] = { roomCode: code, isArbiter: false };
             }
 
             socket.join(code);
@@ -896,6 +911,8 @@ io.on('connection', (socket) => {
             io.to(code).emit('room:update', {
                 participants: getAllPlayers(room)
             });
+
+            persistRoom(code);
 
             const joinName = name || 'Someone';
             sendPushToAll(room, 'New Player Joined!', `${joinName} joined ${room.partyName}`, participantKey, 'join');
@@ -1050,6 +1067,7 @@ io.on('connection', (socket) => {
             io.to(code).emit('room:update', {
                 participants: getAllPlayers(room)
             });
+            persistRoom(code);
         } catch (err) {
             console.error('cell:check error:', err);
         }
@@ -1069,6 +1087,7 @@ io.on('connection', (socket) => {
             io.to(code).emit('game:started', { state: 'active' });
             emitActivity(code, room, { message: 'The game has started! Good luck everyone!' });
             sendPushToAll(room, 'Game Started! 🎲', 'The host has started the game. Good luck!', null, 'game');
+            persistRoom(code);
         } catch (err) {
             console.error('game:start error:', err);
         }
@@ -1101,6 +1120,7 @@ io.on('connection', (socket) => {
             io.to(code).emit('game:over', { standings, gameMode: room.gameMode || 'bingo', leaderboard: finalLeaderboard });
             emitActivity(code, room, { message: 'The host has ended the game.' });
             sendPushToAll(room, 'Game Over!', 'The host ended the game. Check the final standings!', null, 'game');
+            persistRoom(code);
         } catch (err) {
             console.error('game:end error:', err);
         }
@@ -1170,6 +1190,7 @@ io.on('connection', (socket) => {
             io.to(code).emit('game:started', { state: 'active' });
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
             emitActivity(code, room, { message: 'New round started! Cards reshuffled.' });
+            persistRoom(code);
         } catch (err) {
             console.error('game:reset error:', err);
         }
@@ -1208,6 +1229,7 @@ io.on('connection', (socket) => {
             };
             emitActivity(code, room, completeMsg);
             sendPushToAll(room, 'Activity Completed!', `${name} completed "${act.description}"`, playerId, 'task');
+            persistRoom(code);
         } catch (err) { console.error('points:complete error:', err); }
     });
 
@@ -1230,6 +1252,7 @@ io.on('connection', (socket) => {
             const incrMsg = { message: `${name} logged ${newCount}× "${act.description}"`, participantName: name };
             emitActivity(code, room, incrMsg);
             sendPushToAll(room, 'Counter Updated', `${name}: ${newCount}× ${act.description}`, playerId, 'task');
+            persistRoom(code);
         } catch (err) { console.error('points:increment error:', err); }
     });
 
@@ -1254,6 +1277,7 @@ io.on('connection', (socket) => {
             const decrMsg = { message: `${name} adjusted to ${newCount}× "${act.description}"`, participantName: name };
             emitActivity(code, room, decrMsg);
             sendPushToAll(room, 'Counter Adjusted', `${name}: now ${newCount}× ${act.description}`, playerId, 'task');
+            persistRoom(code);
         } catch (err) { console.error('points:decrement error:', err); }
     });
 
@@ -1298,6 +1322,7 @@ io.on('connection', (socket) => {
                 emitActivity(code, room, undoMsg);
                 sendPushToAll(room, 'Host Undo', `${hostName} undid "${act.description}" for ${playerName}`, null, 'task');
             }
+            persistRoom(code);
         } catch (err) { console.error('points:undo error:', err); }
     });
 
@@ -1367,6 +1392,7 @@ io.on('connection', (socket) => {
             }
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            persistRoom(code);
         } catch (err) {
             console.error('task:photo error:', err);
         }
@@ -1441,6 +1467,7 @@ io.on('connection', (socket) => {
             if (room.chatHistory.length > 200) room.chatHistory.shift();
 
             io.to(code).emit('chat:received', chatEntry);
+            persistRoom(code);
         } catch (err) {
             console.error('chat:message error:', err);
         }
@@ -1493,6 +1520,7 @@ io.on('connection', (socket) => {
             emitActivity(code, room, { message: `Host unchecked "${promptText}" for ${target.name}`, participantName: target.name, prompt: promptText });
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
+            persistRoom(code);
         } catch (err) {
             console.error('host:uncheck error:', err);
         }
@@ -1516,9 +1544,7 @@ io.on('connection', (socket) => {
             // Preserve participant data for potential rejoin — mark as kicked
             participant.kicked = true;
             participant.socketId = null;
-            if (users[participantId]) {
-                users[participantId].activeRoom = null;
-            }
+            delete activeRooms[participantId];
 
             if (kickedSocketId) {
                 delete socketToUser[kickedSocketId];
@@ -1531,6 +1557,7 @@ io.on('connection', (socket) => {
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
             emitActivity(code, room, { message: `${name} was kicked`, participantName: name });
+            persistRoom(code);
         } catch (err) {
             console.error('host:kick error:', err);
             socket.emit('error', 'Failed to kick player');
@@ -1552,7 +1579,7 @@ io.on('connection', (socket) => {
             participant.socketId = pending.socketId;
 
             socketToUser[pending.socketId] = { username: playerId, roomCode: code };
-            if (users[playerId]) users[playerId].activeRoom = { roomCode: code, isArbiter: false };
+            activeRooms[playerId] = { roomCode: code, isArbiter: false };
 
             const pendingSock = io.sockets.sockets.get(pending.socketId);
             if (pendingSock) {
@@ -1576,6 +1603,7 @@ io.on('connection', (socket) => {
             }
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
             emitActivity(code, room, { message: `${participant.name} rejoined`, participantName: participant.name });
+            persistRoom(code);
         } catch (err) { console.error('join:approve error:', err); }
     });
 
@@ -1632,12 +1660,8 @@ io.on('connection', (socket) => {
             delete room.participants[newHostId];
 
             // Update activeRoom
-            if (users[oldArbiter.username]) {
-                users[oldArbiter.username].activeRoom = { roomCode: code, isArbiter: false };
-            }
-            if (users[newHostId]) {
-                users[newHostId].activeRoom = { roomCode: code, isArbiter: true };
-            }
+            activeRooms[oldArbiter.username] = { roomCode: code, isArbiter: false };
+            activeRooms[newHostId] = { roomCode: code, isArbiter: true };
 
             // Update socketToUser
             if (oldArbiter.socketId) {
@@ -1695,6 +1719,7 @@ io.on('connection', (socket) => {
 
             io.to(code).emit('room:update', { participants: getAllPlayers(room) });
             emitActivity(code, room, { message: `${newHost.name} is now the host`, participantName: newHost.name });
+            persistRoom(code);
         } catch (err) {
             console.error('host:transfer error:', err);
             socket.emit('error', 'Failed to transfer host');
@@ -1728,7 +1753,23 @@ io.on('connection', (socket) => {
 // START SERVER
 // =======================
 
+async function loadRoomsFromDB() {
+    try {
+        const allRooms = await db.getAllRooms();
+        for (const { code, room_data } of allRooms) {
+            rooms[code] = room_data;
+        }
+        if (allRooms.length > 0) {
+            console.log(`Loaded ${allRooms.length} room(s) from database`);
+        }
+    } catch (err) {
+        console.error('Failed to load rooms from database:', err);
+    }
+}
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`PIngo server running on port ${PORT}`);
+loadRoomsFromDB().then(() => {
+    server.listen(PORT, () => {
+        console.log(`PIngo server running on port ${PORT}`);
+    });
 });
